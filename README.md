@@ -1,69 +1,74 @@
 # BoodleBox Shared Context
 
-Multiplayer Claude Code. See what your teammates are working on across any project, delegate tasks, send collaboration requests, and coordinate in real-time.
+Multiplayer Claude Code. Collaborate across any project — delegate tasks, see what teammates are working on, and let your Claudes coordinate with each other in real-time.
 
 ---
 
-## Quick Start (Teammates)
+## Getting Started
+
+### For teammates (this is all you need)
 
 ```bash
 git clone https://github.com/zkinzler/SharedContextHelper.git
 cd SharedContextHelper
-npm install
-./join.sh
 ```
 
-It asks for your first name. That's it — you're connected globally. Works from any project directory.
-
-> **Prerequisite:** [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and [Node.js 18+](https://nodejs.org/)
-
----
-
-## Using It
-
-Open Claude Code in **any project** and say:
+Open Claude Code and say:
 
 ```
 I want to collaborate
 ```
 
-Or type `/collaborate`. Claude auto-detects your git repo, connects to the team server, and shows you a dashboard of everyone across all projects.
+That's it. Claude handles the rest — detects the server, asks for your name, connects you, and shows the team dashboard. No setup commands, no config, no restarts.
 
-### Things you can say
+> **Prerequisite:** [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) and [Node.js 18+](https://nodejs.org/)
+
+---
+
+## What You Can Do
+
+### See your team
+
+Say `/collaborate` or "I want to collaborate" to see who's online across all projects:
+
+> **Zach** — SharedContextHelper @ main — "Improving delegation system"
+> **Mike** — boodlebox-app @ feature/auth — "Building login flow"
+> **Alex** — idle (last seen 5 min ago)
+
+### Work with someone
+
+Say "I want to work with Mike" and Claude sends a collaboration request. Mike sees it next time he checks in:
+
+> "Zach wants to collaborate with you on SharedContextHelper @ main"
+
+Mike accepts and gets the clone command automatically.
+
+### Delegate work
+
+Describe a big goal and Claude breaks it down, assigns subtasks to teammates, and tracks progress:
+
+> **You:** "Delegate: build a landing page with auth"
+>
+> Claude creates a plan:
+> 1. [high] Design hero section → Alex
+> 2. [high] Build auth flow → Zach (depends on #1)
+> 3. [medium] Write tests → Mike (depends on #2)
+
+Each teammate's Claude picks up their tasks, works on them, and reports progress with a real-time work log.
+
+### Everything else
 
 | Say this | What happens |
 |---|---|
-| "I want to collaborate" | Full check-in: dashboard, messages, tasks, collab requests |
-| "I want to collaborate on [GitHub URL]" | Connects you to that project, shows who's working on it |
-| "I want to work with Alex" | Sends Alex a collab request — they see it next time they check in |
-| "What is Alex working on?" | Shows their repo, branch, goal, files |
-| "Delegate: build a landing page with auth" | Breaks it into subtasks, assigns to teammates, tracks progress |
-| "Share this project with the team" | Shares your repo URL so others can clone it |
-| "Broadcast: don't touch auth.ts" | Sends alert to all teammates |
-| "Create a task: fix the login bug" | Creates shared task others can claim |
+| `/collaborate` | Full dashboard: team, messages, tasks, collab requests |
+| "I want to work with [name]" | Send them a collaboration request |
+| "Delegate: [goal]" | Break down goal, assign to teammates, track progress |
+| "What is [name] working on?" | Shows their repo, branch, goal, files |
+| "Share this project" | Share your repo so teammates can discover it |
+| "Broadcast: don't touch auth.ts" | Send alert to all teammates |
+| `/collaborate my-tasks` | See tasks delegated to you |
+| `/collaborate plan [id]` | View a delegation plan's progress and work logs |
 | `/collaborate status` | Quick team overview |
-| `/collaborate my-tasks` | Tasks delegated to you |
-| `/collaborate delegate <goal>` | Break down and assign a goal |
-| `/collaborate work with <person>` | Send a collaboration request |
-
-### Collaboration Requests
-
-When you say "I want to work with Alex", Claude sends a collaboration request. Alex sees it the next time they `/collaborate`:
-
-> "Zach wants to collaborate with you on SharedContextHelper @ main: 'Let's pair on the auth flow'"
-
-Alex can accept (gets the clone command) or decline.
-
-### Task Delegation
-
-Describe a big goal and Claude will:
-1. Check who's online and what they're working on
-2. Break the goal into subtasks with priorities and dependencies
-3. Show you the plan for approval
-4. Assign subtasks to teammates
-5. Broadcast to the team
-
-Teammates see their assigned tasks when they `/collaborate` and can accept, start, and complete them. The plan auto-completes when all subtasks are done.
 
 ---
 
@@ -71,12 +76,12 @@ Teammates see their assigned tasks when they `/collaborate` and can accept, star
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│  Your Claude  │     │  Their Claude │     │ Another one  │
-│    Code       │     │    Code       │     │              │
+│  Your Claude  │     │  Mike's Claude│     │ Alex's Claude │
+│    Code       │     │    Code       │     │    Code       │
 └──────┬───────┘     └──────┬───────┘     └──────┬───────┘
        │                    │                    │
        └────────────────────┼────────────────────┘
-                            │  REST API (curl)
+                            │  REST API
                    ┌────────▼────────┐
                    │  Shared Context  │
                    │     Server       │
@@ -84,65 +89,41 @@ Teammates see their assigned tasks when they `/collaborate` and can accept, star
                    └─────────────────┘
 ```
 
-Each Claude Code instance connects via REST API (curl). No MCP setup, no session restarts. The server tracks:
+- **One cloud server** handles all projects and all teammates
+- Claude Code connects via **REST API (curl)** — no MCP setup, no restarts
+- After first use, `~/.boodlebox-config.json` stores your connection — works from any directory
+- Each person's git context (repo, branch, commits) is tracked separately
 
-- **Who's online** and their status across all projects
-- **Git context** — which repo, branch, and latest commit each person is on
+### What the server tracks
+
+- **Team presence** — who's online, what they're working on
+- **Git context** — repo, branch, latest commit per person
 - **Collaboration requests** — "I want to work with you on X"
-- **Task delegation** — break goals into subtasks assigned to teammates
-- **File activity** — who's editing what (warns about conflicts)
-- **Deployments** — preview URLs, deploy status
+- **Task delegation** — goals broken into subtasks with dependencies
+- **Work logs** — real-time progress: file changes, commits, blockers
+- **Broadcast messages** — team-wide alerts
 - **Shared projects** — repos shared for others to discover
-- **Broadcast messages** — alerts like "I'm refactoring X, hold off"
-- **Shared tasks** — create, claim, and track work across the team
-
-### One config, all projects
-
-After running `./join.sh` once, a single `~/.boodlebox-config.json` file stores your server connection. `/collaborate` works from any directory — no per-repo setup needed.
-
----
-
-## Server Setup (first time, one person)
-
-The server is deployed on Railway. If you need to set up a new one:
-
-```bash
-git clone https://github.com/zkinzler/SharedContextHelper.git
-cd SharedContextHelper
-npm install
-./setup.sh
-```
-
-This starts the server, generates `team-config.json`, and pushes it. Teammates clone and run `./join.sh`.
-
-To deploy to Railway (recommended for teams):
-```bash
-brew install railway
-railway login
-railway init --name shared-context-helper
-railway up --detach
-railway domain  # generates public URL
-railway variables set SHARED_CONTEXT_TOKEN=your-token
-railway variables set EXTERNAL_URL=https://your-url.up.railway.app
-```
-
-Update `team-config.json` with the Railway URL and push.
+- **File activity** — who's editing what (conflict warnings)
+- **Deployments** — preview URLs, deploy status
 
 ---
 
 ## FAQ
 
 **What does my teammate need to do?**
-Clone this repo, run `npm install`, run `./join.sh`. Then `/collaborate` works everywhere.
+Clone this repo, open Claude Code, say "I want to collaborate". That's it.
 
 **Does this work across different projects?**
-Yes. One server handles all projects. Each person's repo/branch is tracked separately. You can see who's working on what across everything.
+Yes. One server handles all projects. `/collaborate` works from any directory. Each person's repo and branch is tracked separately.
+
+**Do I need to restart Claude Code?**
+No. Everything works via REST API — no session restart needed.
 
 **What if the server restarts?**
-State resets (it's in-memory). Everyone re-registers automatically next time they `/collaborate`.
+State resets (it's in-memory). Everyone re-registers automatically on their next `/collaborate`.
 
-**Do I need to restart Claude Code after setup?**
-No. The skill uses REST API calls (curl), not MCP. It works instantly in any session.
+**Can teammates behind corporate proxies connect?**
+Yes — the server runs on Railway with a public HTTPS URL that works through any proxy.
 
-**Can teammates in different network environments connect?**
-Yes — the Railway deployment gives a public HTTPS URL that works through any proxy or firewall.
+**Can I develop the server code?**
+Yes — `npm install`, `npm run build`, `npm run dev` for local development. Deploy with `railway up --detach`. See CLAUDE.md for details.
