@@ -50,7 +50,7 @@ echo ""
 
 # Save identity
 echo "$NAME" > ~/.boodlebox-user
-echo "[1/3] Saved identity: $NAME"
+echo "[1/4] Saved identity: $NAME"
 
 # Save global config (~/.boodlebox-config.json)
 cat > ~/.boodlebox-config.json << JSONEOF
@@ -60,12 +60,58 @@ cat > ~/.boodlebox-config.json << JSONEOF
   "userId": "$NAME"
 }
 JSONEOF
-echo "[2/3] Saved config to ~/.boodlebox-config.json"
+echo "[2/4] Saved config to ~/.boodlebox-config.json"
 
 # Install skill
 mkdir -p ~/.claude/skills/collaborate
 cp "$SCRIPT_DIR/.claude/skills/collaborate/SKILL.md" ~/.claude/skills/collaborate/SKILL.md
-echo "[3/3] Installed /collaborate skill"
+echo "[3/4] Installed /collaborate skill"
+
+# Install notification hook
+mkdir -p ~/.claude/hooks
+cp "$SCRIPT_DIR/hooks/check-notifications.sh" ~/.claude/hooks/boodlebox-check.sh
+chmod +x ~/.claude/hooks/boodlebox-check.sh
+
+# Add hook to settings.json if not already there
+SETTINGS="$HOME/.claude/settings.json"
+if [ -f "$SETTINGS" ]; then
+  if ! grep -q "boodlebox-check" "$SETTINGS" 2>/dev/null; then
+    # Merge hook into existing settings
+    node -e "
+    const fs = require('fs');
+    const s = JSON.parse(fs.readFileSync('$SETTINGS','utf8'));
+    s.hooks = s.hooks || {};
+    s.hooks.UserPromptSubmit = s.hooks.UserPromptSubmit || [];
+    const exists = s.hooks.UserPromptSubmit.some(h => JSON.stringify(h).includes('boodlebox'));
+    if (!exists) {
+      s.hooks.UserPromptSubmit.push({
+        matcher: '',
+        hooks: [{ type: 'command', command: 'bash ~/.claude/hooks/boodlebox-check.sh' }]
+      });
+    }
+    fs.writeFileSync('$SETTINGS', JSON.stringify(s, null, 2));
+    " 2>/dev/null
+  fi
+else
+  cat > "$SETTINGS" << HOOKEOF
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/boodlebox-check.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+HOOKEOF
+fi
+echo "[4/4] Installed notification hook (checks for tasks on every message)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -75,5 +121,6 @@ echo ""
 echo "  Open Claude Code in ANY project and type:"
 echo "    /collaborate"
 echo ""
-echo "  Works from any directory — no per-project setup needed."
+echo "  You'll also get automatic notifications when"
+echo "  teammates assign tasks or send messages."
 echo ""
