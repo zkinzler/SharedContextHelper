@@ -14,76 +14,120 @@ allowed-tools: Bash(git *), Bash(hostname), Bash(cat ~/.boodlebox-user), Bash(ec
 This skill connects to a single shared server via REST API. Works from any
 directory, any project — no per-repo config needed.
 
+## CRITICAL RULES
+
+- **NEVER start a local server.** Do not run setup.sh, npm run dev, npm run start, or tsx.
+  The server is already running in the cloud. You only need to connect to it.
+- **NEVER modify team-config.json.** It contains the shared cloud server URL. Do not change it.
+- **NEVER run npm install** unless the user explicitly asks to develop the server code.
+- The server URL is: `https://shared-context-helper-production.up.railway.app`
+- The token is in `team-config.json` in the repo (field: `token`) or in `~/.boodlebox-config.json`
+
 ## On startup, do this automatically:
 
-1. **Get user identity.** Run `cat ~/.boodlebox-user 2>/dev/null`.
-   If not found, ask for their first name and save: `echo "NAME" > ~/.boodlebox-user`
+Run ALL of these steps in a SINGLE bash command block to be fast. Do not stop to
+explain each step — just do it all and show the results at the end.
 
-2. **Get server connection.** Run `cat ~/.boodlebox-config.json 2>/dev/null`.
-   This file has `serverUrl`, `token`, and `userId`.
+**Step 1: Get identity, config, and git context all at once.**
 
-   If not found, look for `team-config.json` in the current directory or git root:
-   ```bash
-   cat team-config.json 2>/dev/null || cat "$(git rev-parse --show-toplevel 2>/dev/null)/team-config.json" 2>/dev/null
-   ```
-   If found, read `url` and `token` from it and create `~/.boodlebox-config.json`:
-   ```bash
-   node -e "
-   const tc = JSON.parse(require('fs').readFileSync('team-config.json','utf8'));
-   const config = {serverUrl: tc.url, token: tc.token, userId: '$(cat ~/.boodlebox-user)'};
-   require('fs').writeFileSync(process.env.HOME+'/.boodlebox-config.json', JSON.stringify(config,null,2));
-   "
-   ```
+```bash
+# Identity
+USER=$(cat ~/.boodlebox-user 2>/dev/null)
 
-   If neither found, tell the user:
-   "I need a server to connect to. Options:
-   - If a teammate already set this up, ask them for the server URL and token
-   - Run `./join.sh` in the SharedContextHelper repo"
-   Then ask for serverUrl and token, and save to `~/.boodlebox-config.json`.
+# Config — check global config first, then team-config.json in repo
+CONFIG=$(cat ~/.boodlebox-config.json 2>/dev/null)
+if [ -z "$CONFIG" ]; then
+  # Try team-config.json in current dir or git root
+  TC=$(cat team-config.json 2>/dev/null || cat "$(git rev-parse --show-toplevel 2>/dev/null)/team-config.json" 2>/dev/null)
+  if [ -n "$TC" ]; then
+    SERVER_URL=$(echo "$TC" | grep -o '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+    TOKEN=$(echo "$TC" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  fi
+else
+  SERVER_URL=$(echo "$CONFIG" | grep -o '"serverUrl"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"serverUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  TOKEN=$(echo "$CONFIG" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+fi
 
-   Once you have the config, set variables for all subsequent calls:
-   ```bash
-   SERVER_URL=... TOKEN=... USER=...
-   ```
+# Git context
+REPO_URL=$(git remote get-url origin 2>/dev/null)
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+REPO_NAME=$(basename -s .git "$REPO_URL" 2>/dev/null)
+COMMIT_INFO=$(git log -1 --format="%H|||%s" 2>/dev/null)
+LOCAL_PATH=$(pwd)
+MACHINE=$(hostname)
 
-3. **Test connection.**
-   ```bash
-   curl -sf "$SERVER_URL/health"
-   ```
-   If it fails, tell the user the server is unreachable.
+echo "USER=$USER"
+echo "SERVER_URL=$SERVER_URL"
+echo "TOKEN=${TOKEN:0:4}..."
+echo "REPO=$REPO_NAME BRANCH=$BRANCH"
+```
 
-4. **Register.**
-   ```bash
-   curl -s -X POST "$SERVER_URL/api/register" \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer $TOKEN" \
-     -d "{\"userId\":\"$USER\",\"machineId\":\"$(hostname)\"}"
-   ```
+**Step 2: Handle missing identity.**
+If USER is empty, ask for their first name. Then save it:
+```bash
+echo "TheirName" > ~/.boodlebox-user
+```
 
-5. **Share git context** (if in a git repo):
-   ```bash
-   REPO_URL=$(git remote get-url origin 2>/dev/null)
-   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
-   REPO_NAME=$(basename -s .git "$REPO_URL" 2>/dev/null)
-   COMMIT_INFO=$(git log -1 --format="%H|||%s" 2>/dev/null)
-   LOCAL_PATH=$(pwd)
-   ```
-   If git info detected, POST to `/api/git-context`.
+**Step 3: Handle missing config.**
+If SERVER_URL is empty (no config file AND no team-config.json found):
+- Ask: "What's the server URL for your team's collaboration server?"
+- If they don't know, tell them: "Ask a teammate who set this up, or check if there's
+  a SharedContextHelper repo with a team-config.json in it."
 
-6. **Get the full picture.** Make these calls (can be combined in one bash block):
-   - `GET /api/overview?userId=$USER` → team members, shared projects, deployments
-   - `GET /api/messages?userId=$USER` → broadcast messages
-   - `GET /api/delegation/my-tasks/$USER` → delegated tasks
-   - `GET /api/collab-requests/$USER` → incoming collaboration requests
+Once you have SERVER_URL and TOKEN, **always save to global config** so it works next time:
+```bash
+cat > ~/.boodlebox-config.json << EOF
+{
+  "serverUrl": "$SERVER_URL",
+  "token": "$TOKEN",
+  "userId": "$USER"
+}
+EOF
+```
 
-7. **Report dashboard.** Show a friendly summary:
-   - **Your context:** repo, branch (if in a git repo)
-   - **Team:** who's online, what repo/branch they're on, what they're working on
-   - **Collab requests:** "Alex wants to collaborate with you on [repo] @ [branch]" — ask if they want to accept
-   - **Delegated tasks:** pending tasks assigned to you
-   - **Messages:** any broadcasts
-   - **Shared projects:** available to clone
-   - **Tip:** "Say 'I want to work with [name]' to send them a collab request"
+**Step 4: Connect, register, and fetch everything in one block.**
+
+```bash
+SERVER_URL="..." TOKEN="..." USER="..."
+
+# Test connection
+HEALTH=$(curl -sf "$SERVER_URL/health" 2>/dev/null)
+if [ -z "$HEALTH" ]; then echo "SERVER_UNREACHABLE"; exit 1; fi
+
+# Register
+curl -s -X POST "$SERVER_URL/api/register" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d "{\"userId\":\"$USER\",\"machineId\":\"$(hostname)\"}"
+
+# Share git context (if in a repo)
+if [ -n "$REPO_URL" ]; then
+  HASH=$(echo "$COMMIT_INFO" | cut -d'|||' -f1)
+  MSG=$(echo "$COMMIT_INFO" | cut -d'|||' -f2-)
+  curl -s -X POST "$SERVER_URL/api/git-context" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $TOKEN" \
+    -d "{\"userId\":\"$USER\",\"repoUrl\":\"$REPO_URL\",\"repoName\":\"$REPO_NAME\",\"branch\":\"$BRANCH\",\"localPath\":\"$LOCAL_PATH\",\"lastCommitHash\":\"$HASH\",\"lastCommitMessage\":\"$MSG\"}"
+fi
+
+echo "---OVERVIEW---"
+curl -s "$SERVER_URL/api/overview?userId=$USER" -H "Authorization: Bearer $TOKEN"
+echo "---MESSAGES---"
+curl -s "$SERVER_URL/api/messages?userId=$USER" -H "Authorization: Bearer $TOKEN"
+echo "---TASKS---"
+curl -s "$SERVER_URL/api/delegation/my-tasks/$USER" -H "Authorization: Bearer $TOKEN"
+echo "---REQUESTS---"
+curl -s "$SERVER_URL/api/collab-requests/$USER" -H "Authorization: Bearer $TOKEN"
+```
+
+**Step 5: Report dashboard.** Show a friendly summary:
+- **Your context:** repo, branch (if in a git repo)
+- **Team:** who's online, what repo/branch they're on, what they're working on
+- **Collab requests:** "Alex wants to collaborate with you on [repo] @ [branch]" — ask if they want to accept
+- **Delegated tasks:** pending tasks assigned to you
+- **Messages:** any broadcasts
+- **Shared projects:** available to clone
+- **Tip:** "Say 'I want to work with [name]' to send them a collab request"
 
 ## Interactive flows
 
