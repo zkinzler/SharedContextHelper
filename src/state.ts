@@ -10,6 +10,7 @@ import type {
   DelegationPlan,
   DelegationSubtask,
   CollabRequest,
+  WorkLogEntry,
 } from "./types.js";
 
 const HEARTBEAT_TIMEOUT_MS = Number(
@@ -347,6 +348,7 @@ export class StateManager {
       status: "pending" as const,
       priority: s.priority,
       dependencies: (s.dependsOnIndices ?? []).map((idx) => subtaskIds[idx]),
+      workLog: [],
     }));
     const plan: DelegationPlan = {
       planId: randomUUID().slice(0, 8),
@@ -457,6 +459,28 @@ export class StateManager {
     if (allDone) {
       plan.status = "completed";
     }
+    return { success: true };
+  }
+
+  appendWorkLog(
+    planId: string,
+    subtaskId: string,
+    userId: string,
+    entry: { type: WorkLogEntry["type"]; message: string; metadata?: Record<string, string> }
+  ): { success: boolean; error?: string } {
+    const plan = this.delegationPlans.get(planId);
+    if (!plan) return { success: false, error: "Plan not found" };
+    const subtask = plan.subtasks.find((s) => s.subtaskId === subtaskId);
+    if (!subtask) return { success: false, error: "Subtask not found" };
+    if (subtask.assignedTo !== userId) {
+      return { success: false, error: "This subtask is not assigned to you" };
+    }
+    subtask.workLog.push({
+      timestamp: Date.now(),
+      type: entry.type,
+      message: entry.message,
+      metadata: entry.metadata,
+    });
     return { success: true };
   }
 

@@ -151,10 +151,51 @@ When a user describes a big goal:
 4. POST `/api/delegation/create` with the breakdown
 5. POST `/api/broadcast` to notify the team
 
-When you see delegated tasks:
-- **Pending:** Ask user to accept → POST `/api/delegation/PLANID/respond`
-- **Accepted:** Starting work → POST `/api/delegation/PLANID/update` with `"in_progress"`
-- **Done:** POST update with `"completed"` and notes
+### Auto-work: Claude-to-Claude delegation
+
+When the dashboard shows delegated tasks assigned to you, **proactively offer to start working**:
+
+1. **Show each pending task prominently:**
+   "You have a task from [coordinator]: [description] [priority]"
+   "Want me to start working on this?"
+
+2. **When the user says yes (or you auto-start):**
+   - POST `/api/delegation/PLANID/respond` with `"accepted"`
+   - POST `/api/delegation/PLANID/update` with `"in_progress"`
+   - Log start: POST `/api/delegation/PLANID/log` with `{"subtaskId":"...","userId":"...","type":"progress","message":"Starting work on: [description]"}`
+
+3. **While working, log progress after meaningful milestones:**
+   - After creating/editing a file: POST log with `type: "file_change"` and `metadata: {"filePath": "..."}`
+   - After a git commit: POST log with `type: "commit"` and `metadata: {"commitHash": "...", "commitMessage": "..."}`
+   - If blocked by a dependency or issue: POST log with `type: "blocker"` and the description
+   - General progress updates: POST log with `type: "progress"`
+
+   Example:
+   ```bash
+   curl -s -X POST "$SERVER_URL/api/delegation/PLANID/log" \
+     -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" \
+     -d '{"subtaskId":"...","userId":"...","type":"commit","message":"Added REST endpoints for work logging","metadata":{"commitHash":"abc123"}}'
+   ```
+
+4. **When done:**
+   - POST `/api/delegation/PLANID/log` with `type: "complete"` and a summary
+   - POST `/api/delegation/PLANID/update` with `"completed"` and summary notes
+   - Notify: POST `/api/broadcast` with "[user] completed: [subtask description]"
+
+5. **Check dependencies before starting:**
+   If a subtask has dependencies, GET `/api/delegation/PLANID` to check if they're completed.
+   If blocked, tell the user and log a blocker. Check again when prompted or on next `/collaborate`.
+
+### Monitoring delegated work
+
+The coordinator (person who created the plan) can check progress:
+- GET `/api/delegation/PLANID` shows all subtasks with their work logs
+- Each work log entry has a timestamp, type, and message
+- This lets you see in real-time what each Claude is doing on their subtask
+
+When viewing a plan as coordinator, summarize the work logs:
+- "Alex's Claude: started 5 min ago, 2 commits, currently working on file X"
+- "Mike's Claude: blocked on subtask A, waiting for Alex to finish"
 
 ## Quick commands
 
@@ -191,6 +232,7 @@ All endpoints require `Authorization: Bearer TOKEN` header.
 | GET | /api/delegation/my-tasks/:userId | Get assigned subtasks |
 | POST | /api/delegation/:planId/respond | Accept/reject subtask |
 | POST | /api/delegation/:planId/update | Update subtask status |
+| POST | /api/delegation/:planId/log | Append work log `{subtaskId, userId, type, message, metadata?}` |
 | POST | /api/share-project | Share project |
 | POST | /api/deployment | Update deployment |
 | GET | /api/file-activity?filePath=&userId= | File activity |

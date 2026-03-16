@@ -267,6 +267,14 @@ api.get("/file-activity", (req: Request, res: Response) => {
   res.json({ activities: state.getFileActivity({ filePath, userId }) });
 });
 
+api.post("/delegation/:planId/log", (req: Request, res: Response) => {
+  const { subtaskId, userId, type, message, metadata } = req.body;
+  if (!subtaskId || !userId || !type || !message) {
+    res.status(400).json({ error: "subtaskId, userId, type, message required" }); return;
+  }
+  res.json(state.appendWorkLog(req.params.planId as string, subtaskId, userId, { type, message, metadata }));
+});
+
 api.post("/collab-request", (req: Request, res: Response) => {
   const { fromUserId, toUserId, repoUrl, repoName, branch, message } = req.body;
   if (!fromUserId || !toUserId || !repoUrl || !repoName || !branch) {

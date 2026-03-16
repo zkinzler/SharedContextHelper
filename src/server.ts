@@ -538,6 +538,40 @@ export function createServer(): McpServer {
     }
   );
 
+  // ── append_work_log ─────────────────────────────────
+
+  server.tool(
+    "append_work_log",
+    "Log progress on a subtask you're working on. Use this to report commits, file changes, blockers, or general progress so the coordinator and team can see what's happening in real-time.",
+    {
+      planId: z.string().describe("The delegation plan ID"),
+      subtaskId: z.string().describe("The subtask ID"),
+      userId: z.string().describe("Your user ID"),
+      type: z.enum(["progress", "commit", "file_change", "blocker", "complete"]).describe("Type of log entry"),
+      message: z.string().describe("What happened"),
+      metadata: z.record(z.string()).optional().describe("Optional key-value metadata (e.g. commitHash, filePath)"),
+    },
+    async ({ planId, subtaskId, userId, type, message, metadata }) => {
+      const result = state.appendWorkLog(planId, subtaskId, userId, { type, message, metadata });
+      if (!result.success) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Logged [${type}]: ${message}`,
+          },
+        ],
+      };
+    }
+  );
+
   // ── send_collab_request ─────────────────────────────
 
   server.tool(

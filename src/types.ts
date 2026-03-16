@@ -80,6 +80,13 @@ export interface CollabRequest {
   expiresAt: number;
 }
 
+export interface WorkLogEntry {
+  timestamp: number;
+  type: "progress" | "commit" | "file_change" | "blocker" | "complete";
+  message: string;
+  metadata?: Record<string, string>;
+}
+
 export interface DelegationSubtask {
   subtaskId: string;
   description: string;
@@ -91,6 +98,7 @@ export interface DelegationSubtask {
   completedAt?: number;
   acceptedAt?: number;
   notes?: string;
+  workLog: WorkLogEntry[];
 }
 
 export interface DelegationPlan {
