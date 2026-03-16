@@ -7,6 +7,8 @@ import type {
   GitContext,
   DeploymentInfo,
   SharedProject,
+  DelegationPlan,
+  DelegationSubtask,
 } from "./types.js";
 
 const HEARTBEAT_TIMEOUT_MS = Number(
@@ -23,6 +25,7 @@ export class StateManager {
   private messages: BroadcastMessage[] = [];
   private fileActivities: FileActivity[] = [];
   private sharedProjects: SharedProject[] = [];
+  private delegationPlans = new Map<string, DelegationPlan>();
   private cleanupTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -313,6 +316,148 @@ export class StateManager {
     });
   }
 
+  // ── Delegation Plans ────────────────────────────────
+
+  createDelegationPlan(
+    goal: string,
+    createdBy: string,
+    subtasks: Array<{
+      description: string;
+      assignedTo: string;
+      priority: "high" | "medium" | "low";
+      dependsOnIndices?: number[];
+    }>
+  ): DelegationPlan | { error: string } {
+    const subtaskIds = subtasks.map(() => randomUUID().slice(0, 8));
+    for (const s of subtasks) {
+      if (s.dependsOnIndices) {
+        for (const idx of s.dependsOnIndices) {
+          if (idx < 0 || idx >= subtasks.length) {
+            return { error: `Invalid dependency index ${idx}` };
+          }
+        }
+      }
+    }
+    const resolvedSubtasks: DelegationSubtask[] = subtasks.map((s, i) => ({
+      subtaskId: subtaskIds[i],
+      description: s.description,
+      assignedTo: s.assignedTo,
+      status: "pending" as const,
+      priority: s.priority,
+      dependencies: (s.dependsOnIndices ?? []).map((idx) => subtaskIds[idx]),
+    }));
+    const plan: DelegationPlan = {
+      planId: randomUUID().slice(0, 8),
+      goal,
+      createdBy,
+      createdAt: Date.now(),
+      status: "active",
+      subtasks: resolvedSubtasks,
+    };
+    this.delegationPlans.set(plan.planId, plan);
+    return plan;
+  }
+
+  getDelegationPlan(planId: string): DelegationPlan | null {
+    return this.delegationPlans.get(planId) ?? null;
+  }
+
+  listDelegationPlans(
+    filter?: "active" | "completed" | "cancelled"
+  ): DelegationPlan[] {
+    const all = Array.from(this.delegationPlans.values());
+    if (!filter) return all;
+    return all.filter((p) => p.status === filter);
+  }
+
+  getMyDelegatedTasks(
+    userId: string
+  ): Array<{ planId: string; goal: string; subtask: DelegationSubtask }> {
+    const results: Array<{
+      planId: string;
+      goal: string;
+      subtask: DelegationSubtask;
+    }> = [];
+    for (const plan of this.delegationPlans.values()) {
+      if (plan.status !== "active") continue;
+      for (const subtask of plan.subtasks) {
+        if (subtask.assignedTo === userId) {
+          results.push({ planId: plan.planId, goal: plan.goal, subtask });
+        }
+      }
+    }
+    return results;
+  }
+
+  respondToSubtask(
+    planId: string,
+    subtaskId: string,
+    userId: string,
+    response: "accepted" | "rejected",
+    reason?: string
+  ): { success: boolean; error?: string } {
+    const plan = this.delegationPlans.get(planId);
+    if (!plan) return { success: false, error: "Plan not found" };
+    const subtask = plan.subtasks.find((s) => s.subtaskId === subtaskId);
+    if (!subtask) return { success: false, error: "Subtask not found" };
+    if (subtask.assignedTo !== userId) {
+      return { success: false, error: "This subtask is not assigned to you" };
+    }
+    if (subtask.status !== "pending") {
+      return {
+        success: false,
+        error: `Subtask is already ${subtask.status}`,
+      };
+    }
+    if (response === "accepted") {
+      subtask.status = "accepted";
+      subtask.acceptedAt = Date.now();
+    } else {
+      subtask.status = "rejected";
+      subtask.rejectionReason = reason;
+    }
+    return { success: true };
+  }
+
+  updateSubtaskStatus(
+    planId: string,
+    subtaskId: string,
+    userId: string,
+    updates: { status?: "in_progress" | "completed"; notes?: string }
+  ): { success: boolean; error?: string } {
+    const plan = this.delegationPlans.get(planId);
+    if (!plan) return { success: false, error: "Plan not found" };
+    const subtask = plan.subtasks.find((s) => s.subtaskId === subtaskId);
+    if (!subtask) return { success: false, error: "Subtask not found" };
+    if (subtask.assignedTo !== userId) {
+      return { success: false, error: "This subtask is not assigned to you" };
+    }
+    if (updates.status === "in_progress") {
+      if (subtask.status !== "accepted" && subtask.status !== "pending") {
+        return {
+          success: false,
+          error: `Cannot start subtask with status "${subtask.status}"`,
+        };
+      }
+      subtask.status = "in_progress";
+    }
+    if (updates.status === "completed") {
+      subtask.status = "completed";
+      subtask.completedAt = Date.now();
+    }
+    if (updates.notes !== undefined) {
+      subtask.notes = updates.notes;
+    }
+    // Auto-complete plan if all subtasks are done
+    const allDone = plan.subtasks.every(
+      (s) => s.status === "completed" || s.status === "rejected"
+    );
+    if (allDone) {
+      plan.status = "completed";
+    }
+    return { success: true };
+  }
+
   // ── Cleanup ──────────────────────────────────────────
 
   private cleanup(): void {
@@ -328,6 +473,14 @@ export class StateManager {
     this.sharedProjects = this.sharedProjects.filter(
       (p) => p.expiresAt > now
     );
+    for (const [id, plan] of this.delegationPlans) {
+      if (
+        plan.status === "active" &&
+        now - plan.createdAt > 24 * 60 * 60_000
+      ) {
+        this.delegationPlans.delete(id);
+      }
+    }
   }
 
   destroy(): void {

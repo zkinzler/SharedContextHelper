@@ -66,3 +66,25 @@ export interface SharedProject {
   sharedAt: number;
   expiresAt: number;
 }
+
+export interface DelegationSubtask {
+  subtaskId: string;
+  description: string;
+  assignedTo: string;
+  status: "pending" | "accepted" | "rejected" | "in_progress" | "completed";
+  priority: "high" | "medium" | "low";
+  dependencies: string[];
+  rejectionReason?: string;
+  completedAt?: number;
+  acceptedAt?: number;
+  notes?: string;
+}
+
+export interface DelegationPlan {
+  planId: string;
+  goal: string;
+  createdBy: string;
+  createdAt: number;
+  status: "active" | "completed" | "cancelled";
+  subtasks: DelegationSubtask[];
+}

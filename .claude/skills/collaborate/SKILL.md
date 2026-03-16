@@ -32,12 +32,17 @@ allowed-tools: Bash(git *), Bash(hostname), Bash(cat ~/.boodlebox-user), Read
 
 6. **Check messages.** Call `get_messages` for any team broadcasts.
 
-7. **Report to the user.** Give a brief, friendly summary:
+7. **Check delegated tasks.** Call `get_my_delegated_tasks` with your userId.
+   If there are pending subtasks, highlight them prominently:
+   "You have N task(s) delegated to you:" followed by description and priority.
+
+8. **Report to the user.** Give a brief, friendly summary:
    - Your detected context (repo, branch)
    - Who else is online and what repo/branch they're on
    - Any shared projects available to jump into (with clone commands)
    - Any deployment status updates
    - Any broadcast messages
+   - Any delegated tasks pending your response
    - Warnings if someone is editing the same files as you
 
 ## GitHub URL sharing:
@@ -68,10 +73,37 @@ After a `vercel deploy` or similar:
 
 Keep it lightweight — update status on meaningful changes, not every keystroke.
 
+## Task Delegation
+
+When a user describes a big goal or project (e.g., "build a landing page with auth",
+"refactor the API layer", "ship the new dashboard"):
+
+1. **Assess the team.** Call `get_team_context` to see who's online and what they're doing.
+2. **Break down the goal.** Think about the subtasks needed, considering:
+   - What can be parallelized vs. what has dependencies
+   - Who's best suited based on what they're currently working on
+   - Priority of each subtask
+3. **Present the plan to the user.** Before committing, show them:
+   - The subtask breakdown
+   - Who you'd assign each to and why
+   - The dependency order
+4. **After user approval,** call `create_delegation_plan` with the full breakdown.
+5. **Broadcast.** Call `broadcast_message` to let the team know a plan was created:
+   "New delegation plan: [goal]. Check your tasks with /collaborate."
+
+When you see delegated tasks assigned to your user:
+- **Pending tasks:** Ask the user if they want to accept. Call `respond_to_subtask`.
+- **Accepted tasks:** When starting work, call `update_subtask_status` with "in_progress".
+- **Completed tasks:** After finishing, call `update_subtask_status` with "completed" and a summary note.
+- **Blocked tasks:** If dependencies aren't met, tell the user and show what's blocking.
+
 ## Quick commands:
 
-- `/collaborate` — full check-in (register + overview + messages)
+- `/collaborate` — full check-in (register + overview + messages + delegated tasks)
 - `/collaborate check` or `/collaborate status` — just get team overview
 - `/collaborate broadcast <message>` — send a broadcast
 - `/collaborate tasks` — list shared tasks
 - `/collaborate share` — share current project with team
+- `/collaborate delegate <goal>` — break down a goal and delegate to the team
+- `/collaborate my-tasks` — check tasks delegated to you
+- `/collaborate plan <planId>` — view a delegation plan's status

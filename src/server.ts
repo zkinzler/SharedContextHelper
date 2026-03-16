@@ -538,5 +538,268 @@ export function createServer(): McpServer {
     }
   );
 
+  // ── create_delegation_plan ──────────────────────────
+
+  server.tool(
+    "create_delegation_plan",
+    "Create a delegation plan that breaks a high-level goal into subtasks assigned to specific team members. You (the Claude Code instance) should analyze the goal, check who's available via get_team_context, and build the subtask breakdown.",
+    {
+      userId: z.string().describe("Your user ID (plan creator/coordinator)"),
+      goal: z.string().describe("The high-level goal to accomplish"),
+      subtasks: z
+        .array(
+          z.object({
+            description: z.string().describe("What this subtask involves"),
+            assignedTo: z
+              .string()
+              .describe("userId of the team member to assign this to"),
+            priority: z
+              .enum(["high", "medium", "low"])
+              .describe("Task priority"),
+            dependsOnIndices: z
+              .array(z.number())
+              .optional()
+              .describe(
+                "0-based indices of subtasks in this array that must complete before this one"
+              ),
+          })
+        )
+        .describe("The subtasks that make up this plan"),
+    },
+    async ({ userId, goal, subtasks }) => {
+      const result = state.createDelegationPlan(goal, userId, subtasks);
+      if ("error" in result) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      const lines = result.subtasks.map((s, i) => {
+        const deps =
+          s.dependencies.length > 0
+            ? ` (after: ${s.dependencies.join(", ")})`
+            : "";
+        return `${i + 1}. [${s.priority}] ${s.subtaskId} → ${s.assignedTo}: ${s.description}${deps}`;
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `# Delegation Plan Created (${result.planId})\n\nGoal: ${goal}\nCoordinator: ${userId}\nSubtasks: ${result.subtasks.length}\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── get_delegation_plan ───────────────────────────
+
+  server.tool(
+    "get_delegation_plan",
+    "View the full status of a delegation plan and all its subtasks.",
+    {
+      planId: z.string().describe("The delegation plan ID"),
+    },
+    async ({ planId }) => {
+      const plan = state.getDelegationPlan(planId);
+      if (!plan) {
+        return {
+          content: [
+            { type: "text" as const, text: "Plan not found." },
+          ],
+          isError: true,
+        };
+      }
+      const lines = plan.subtasks.map((s) => {
+        const deps =
+          s.dependencies.length > 0
+            ? ` (depends on: ${s.dependencies.join(", ")})`
+            : "";
+        const notes = s.notes ? ` — Notes: ${s.notes}` : "";
+        const rejection =
+          s.status === "rejected" && s.rejectionReason
+            ? ` — Reason: ${s.rejectionReason}`
+            : "";
+        return `- [${s.status}] ${s.subtaskId} → ${s.assignedTo} [${s.priority}]: ${s.description}${deps}${notes}${rejection}`;
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `# Plan ${plan.planId} [${plan.status}]\n\nGoal: ${plan.goal}\nCreated by: ${plan.createdBy}\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── list_delegation_plans ─────────────────────────
+
+  server.tool(
+    "list_delegation_plans",
+    "List all delegation plans, optionally filtered by status.",
+    {
+      filter: z
+        .enum(["active", "completed", "cancelled"])
+        .optional()
+        .describe("Filter by plan status"),
+    },
+    async ({ filter }) => {
+      const plans = state.listDelegationPlans(filter);
+      if (plans.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: filter
+                ? `No ${filter} delegation plans.`
+                : "No delegation plans exist yet.",
+            },
+          ],
+        };
+      }
+      const lines = plans.map((p) => {
+        const done = p.subtasks.filter((s) => s.status === "completed").length;
+        return `- [${p.status}] ${p.planId}: ${p.goal} (${done}/${p.subtasks.length} done) — by ${p.createdBy}`;
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `# Delegation Plans (${plans.length})\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── get_my_delegated_tasks ────────────────────────
+
+  server.tool(
+    "get_my_delegated_tasks",
+    "See all subtasks assigned to you across all active delegation plans. Check this to see what work has been delegated to you.",
+    {
+      userId: z.string().describe("Your user ID"),
+    },
+    async ({ userId }) => {
+      const tasks = state.getMyDelegatedTasks(userId);
+      if (tasks.length === 0) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: "No tasks delegated to you.",
+            },
+          ],
+        };
+      }
+      const lines = tasks.map((t) => {
+        const deps =
+          t.subtask.dependencies.length > 0
+            ? ` (blocked by: ${t.subtask.dependencies.join(", ")})`
+            : "";
+        return `- [${t.subtask.status}] Plan ${t.planId} "${t.goal}" → ${t.subtask.subtaskId} [${t.subtask.priority}]: ${t.subtask.description}${deps}`;
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `# Your Delegated Tasks (${tasks.length})\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── respond_to_subtask ────────────────────────────
+
+  server.tool(
+    "respond_to_subtask",
+    "Accept or reject a subtask that was delegated to you.",
+    {
+      planId: z.string().describe("The delegation plan ID"),
+      subtaskId: z.string().describe("The subtask ID to respond to"),
+      userId: z.string().describe("Your user ID"),
+      response: z
+        .enum(["accepted", "rejected"])
+        .describe("Accept or reject the subtask"),
+      reason: z
+        .string()
+        .optional()
+        .describe("Reason for rejecting (if rejecting)"),
+    },
+    async ({ planId, subtaskId, userId, response, reason }) => {
+      const result = state.respondToSubtask(
+        planId,
+        subtaskId,
+        userId,
+        response,
+        reason
+      );
+      if (!result.success) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Subtask ${subtaskId} ${response}${response === "rejected" && reason ? `: ${reason}` : ""}.`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── update_subtask_status ─────────────────────────
+
+  server.tool(
+    "update_subtask_status",
+    "Update the status of a subtask you're working on — mark it in progress or completed, or add notes.",
+    {
+      planId: z.string().describe("The delegation plan ID"),
+      subtaskId: z.string().describe("The subtask ID"),
+      userId: z.string().describe("Your user ID"),
+      status: z
+        .enum(["in_progress", "completed"])
+        .optional()
+        .describe("New status"),
+      notes: z
+        .string()
+        .optional()
+        .describe("Progress notes or completion summary"),
+    },
+    async ({ planId, subtaskId, userId, status, notes }) => {
+      const result = state.updateSubtaskStatus(planId, subtaskId, userId, {
+        status,
+        notes,
+      });
+      if (!result.success) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      const plan = state.getDelegationPlan(planId);
+      const planStatus = plan?.status === "completed" ? " Plan is now complete!" : "";
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Subtask ${subtaskId} updated.${status ? ` Status: ${status}.` : ""}${notes ? ` Notes: ${notes}` : ""}${planStatus}`,
+          },
+        ],
+      };
+    }
+  );
+
   return server;
 }
