@@ -94,6 +94,9 @@ export interface DelegationSubtask {
   status: "pending" | "accepted" | "rejected" | "in_progress" | "completed";
   priority: "high" | "medium" | "low";
   dependencies: string[];
+  context?: string;
+  filesToExamine?: string[];
+  approach?: string;
   rejectionReason?: string;
   completedAt?: number;
   acceptedAt?: number;

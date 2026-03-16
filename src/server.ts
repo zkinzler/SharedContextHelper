@@ -692,6 +692,24 @@ export function createServer(): McpServer {
               .describe(
                 "0-based indices of subtasks in this array that must complete before this one"
               ),
+            context: z
+              .string()
+              .optional()
+              .describe(
+                "Detailed context for the receiving Claude: why this task matters, how it fits into the bigger picture, what decisions have been made, what the current state of the code is. Write this as if you are briefing another Claude who has never seen this codebase."
+              ),
+            filesToExamine: z
+              .array(z.string())
+              .optional()
+              .describe(
+                "File paths the receiving Claude should read first to understand the task"
+              ),
+            approach: z
+              .string()
+              .optional()
+              .describe(
+                "Suggested implementation approach, patterns to follow, things to avoid. Be specific — reference existing code patterns, function names, architectural decisions."
+              ),
           })
         )
         .describe("The subtasks that make up this plan"),

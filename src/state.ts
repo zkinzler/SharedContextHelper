@@ -329,6 +329,9 @@ export class StateManager {
       assignedTo: string;
       priority: "high" | "medium" | "low";
       dependsOnIndices?: number[];
+      context?: string;
+      filesToExamine?: string[];
+      approach?: string;
     }>
   ): DelegationPlan | { error: string } {
     const subtaskIds = subtasks.map(() => randomUUID().slice(0, 8));
@@ -348,6 +351,9 @@ export class StateManager {
       status: "pending" as const,
       priority: s.priority,
       dependencies: (s.dependsOnIndices ?? []).map((idx) => subtaskIds[idx]),
+      context: s.context,
+      filesToExamine: s.filesToExamine,
+      approach: s.approach,
       workLog: [],
     }));
     const plan: DelegationPlan = {

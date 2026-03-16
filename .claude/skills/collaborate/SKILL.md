@@ -191,21 +191,48 @@ After a `vercel deploy` or similar:
 When a user describes a big goal:
 1. GET `/api/team` to see who's available
 2. Break down into subtasks, consider dependencies and who's best suited
-3. Present plan to user for approval
-4. POST `/api/delegation/create` with the breakdown
-5. POST `/api/broadcast` to notify the team
+3. **For each subtask, write a rich context brief** — this is CRITICAL. The receiving
+   Claude has never seen this codebase or conversation. You must include:
+   - `context`: Why this task exists, how it fits into the bigger picture, what
+     decisions led here, what the current state of the code is. Write as if briefing
+     a new team member who knows nothing about the project.
+   - `filesToExamine`: Specific file paths the other Claude should read first
+   - `approach`: How to implement it — reference existing patterns, function names,
+     architectural decisions, things to avoid. Be specific and technical.
+4. Present plan to user for approval
+5. POST `/api/delegation/create` with the breakdown including context fields:
+   ```json
+   {"userId":"NAME","goal":"...","subtasks":[
+     {
+       "description":"Short summary of the task",
+       "assignedTo":"Mike",
+       "priority":"high",
+       "context":"We are building a collaboration system for Claude Code instances. The server is a Node.js Express app deployed on Railway. We just added a notification hook (hooks/check-notifications.sh) that checks the server every 60 seconds via a UserPromptSubmit hook in Claude Code. The current limitation is that notifications are text-only — the user might miss them. We need a visual or audio alert...",
+       "filesToExamine":["hooks/check-notifications.sh","join.sh","~/.claude/settings.json"],
+       "approach":"Look at how the hook currently outputs text to stdout. Add a macOS notification via osascript or a terminal bell. Keep it cross-platform — check the OS first. Follow the existing pattern in the hook of being lightweight with a 2-second timeout."
+     }
+   ]}
+   ```
+6. POST `/api/broadcast` to notify the team
 
 ### Auto-work: Claude-to-Claude delegation
 
 When the dashboard shows delegated tasks assigned to you, **proactively offer to start working**:
 
-1. **Show each pending task prominently:**
+1. **Show each pending task with the context the delegating Claude provided:**
    "You have a task from [coordinator]: [description] [priority]"
-   "Want me to start working on this?"
+   If the task has `context`, summarize it for the user in plain language:
+   "Here's what Zach's Claude says about this: [context summary]"
+   If it has `filesToExamine`, mention: "I should look at [files] first."
+   If it has `approach`, mention: "The suggested approach is: [approach summary]"
+   Then ask: "Want me to start working on this?"
 
 2. **When the user says yes (or you auto-start):**
    - POST `/api/delegation/PLANID/respond` with `"accepted"`
    - POST `/api/delegation/PLANID/update` with `"in_progress"`
+   - **Read the files listed in `filesToExamine`** to understand the codebase
+   - **Follow the `approach`** guidance from the delegating Claude
+   - **Use `context`** to understand why this task matters and what decisions were made
    - Log start: POST `/api/delegation/PLANID/log` with `{"subtaskId":"...","userId":"...","type":"progress","message":"Starting work on: [description]"}`
 
 3. **While working, log progress after meaningful milestones:**
