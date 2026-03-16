@@ -1,5 +1,5 @@
 {
-  "url": "http://192.0.2.2:3099",
-  "token": "eecc267806ed11ea4a30a2150cf7c443",
-  "updated": "2026-03-16T22:08:42Z"
+  "url": "http://localhost:3099",
+  "token": "localtoken123",
+  "updated": "2026-03-16T22:10:00Z"
 }
