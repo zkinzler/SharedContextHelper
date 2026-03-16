@@ -20,14 +20,6 @@ if [ -z "$SERVER_URL" ] || [ -z "$TOKEN" ]; then
   exit 1
 fi
 
-# Check for Claude CLI
-if ! command -v claude &> /dev/null; then
-  echo ""
-  echo "Claude Code CLI not found."
-  echo "Install it first: https://docs.anthropic.com/en/docs/claude-code"
-  exit 1
-fi
-
 # Get name
 NAME="${1:-}"
 if [ -z "$NAME" ]; then
@@ -58,17 +50,46 @@ echo ""
 
 # Save identity
 echo "$NAME" > ~/.boodlebox-user
-echo "[1/3] Saved identity: $NAME"
+echo "[1/4] Saved identity: $NAME"
 
-# Add MCP server
-claude mcp remove -s user shared-context 2>/dev/null || true
-claude mcp add --transport http --scope user shared-context "$SERVER_URL/mcp" --header "Authorization: Bearer $TOKEN"
-echo "[2/3] Connected to server"
+# Save to project registry (~/.boodlebox-projects.json)
+REPO_URL=$(cd "$SCRIPT_DIR" && git remote get-url origin 2>/dev/null || echo "")
+REPO_NAME=$(basename -s .git "$REPO_URL" 2>/dev/null || basename "$SCRIPT_DIR")
+PROJECTS_FILE="$HOME/.boodlebox-projects.json"
+TODAY=$(date +%Y-%m-%d)
+
+if [ -f "$PROJECTS_FILE" ]; then
+  # Use a temp file to update
+  node -e "
+    const fs = require('fs');
+    const data = JSON.parse(fs.readFileSync('$PROJECTS_FILE', 'utf8'));
+    data.projects = data.projects || {};
+    data.projects['$REPO_NAME'] = {
+      repoUrl: '$REPO_URL',
+      serverUrl: '$SERVER_URL',
+      token: '$TOKEN',
+      addedAt: '$TODAY'
+    };
+    fs.writeFileSync('$PROJECTS_FILE', JSON.stringify(data, null, 2));
+  " 2>/dev/null || echo '{"projects":{"'"$REPO_NAME"'":{"repoUrl":"'"$REPO_URL"'","serverUrl":"'"$SERVER_URL"'","token":"'"$TOKEN"'","addedAt":"'"$TODAY"'"}}}' > "$PROJECTS_FILE"
+else
+  echo '{"projects":{"'"$REPO_NAME"'":{"repoUrl":"'"$REPO_URL"'","serverUrl":"'"$SERVER_URL"'","token":"'"$TOKEN"'","addedAt":"'"$TODAY"'"}}}' > "$PROJECTS_FILE"
+fi
+echo "[2/4] Saved project to ~/.boodlebox-projects.json"
+
+# Add MCP server (optional — the skill works via REST API without this)
+if command -v claude &> /dev/null; then
+  claude mcp remove -s user shared-context 2>/dev/null || true
+  claude mcp add --transport http --scope user shared-context "$SERVER_URL/mcp" --header "Authorization: Bearer $TOKEN" 2>/dev/null || true
+  echo "[3/4] Added MCP server (optional, for direct tool access)"
+else
+  echo "[3/4] Skipped MCP setup (Claude CLI not found — not required)"
+fi
 
 # Install skill
 mkdir -p ~/.claude/skills/collaborate
 cp "$SCRIPT_DIR/.claude/skills/collaborate/SKILL.md" ~/.claude/skills/collaborate/SKILL.md
-echo "[3/3] Installed /collaborate skill"
+echo "[4/4] Installed /collaborate skill"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -77,4 +98,6 @@ echo "━━━━━━━━━━━━━━━━━━━━━━━━�
 echo ""
 echo "  Open Claude Code in any project and type:"
 echo "    /collaborate"
+echo ""
+echo "  No restart needed — it connects automatically via the REST API."
 echo ""

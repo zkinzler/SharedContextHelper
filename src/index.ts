@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { createServer } from "./server.js";
 import { generateInstallScript } from "./install-script.js";
+import { state } from "./state.js";
 
 const PORT = Number(process.env.PORT ?? 3099);
 const TOKEN = process.env.SHARED_CONTEXT_TOKEN ?? "";
@@ -134,6 +135,139 @@ app.get("/invite", (_req: Request, res: Response) => {
     `Share this with your team:\n\n  ${cmd}\n\nReplace "YourName" with their first name.\n`
   );
 });
+
+// ── REST API (for skill/curl access — no MCP session needed) ──
+
+const api = express.Router();
+api.use(express.json());
+api.use(requireAuth as express.RequestHandler);
+
+api.post("/register", (req: Request, res: Response) => {
+  const { userId, machineId } = req.body;
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  const member = state.register(userId, machineId);
+  const teamSize = state.getTeamContext().length + 1;
+  res.json({ member, teamSize });
+});
+
+api.post("/status", (req: Request, res: Response) => {
+  const { userId, currentGoal, workingFiles, status } = req.body;
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  const member = state.updateStatus(userId, { currentGoal, workingFiles, status });
+  if (!member) { res.status(404).json({ error: "User not found. Register first." }); return; }
+  res.json({ member });
+});
+
+api.get("/team", (req: Request, res: Response) => {
+  const userId = req.query.userId as string | undefined;
+  const members = state.getTeamContext(userId);
+  res.json({ members });
+});
+
+api.post("/git-context", (req: Request, res: Response) => {
+  const { userId, ...gitContext } = req.body;
+  if (!userId) { res.status(400).json({ error: "userId required" }); return; }
+  const member = state.updateGitContext(userId, { ...gitContext, lastCommitAt: Date.now() });
+  if (!member) { res.status(404).json({ error: "User not found. Register first." }); return; }
+  res.json({ ok: true });
+});
+
+api.get("/overview", (req: Request, res: Response) => {
+  const userId = req.query.userId as string | undefined;
+  res.json(state.getProjectOverview(userId));
+});
+
+api.post("/broadcast", (req: Request, res: Response) => {
+  const { userId, message, ttlMinutes } = req.body;
+  if (!userId || !message) { res.status(400).json({ error: "userId and message required" }); return; }
+  const msg = state.broadcastMessage(userId, message, ttlMinutes);
+  res.json({ message: msg });
+});
+
+api.get("/messages", (req: Request, res: Response) => {
+  const userId = req.query.userId as string | undefined;
+  const since = req.query.since ? Number(req.query.since) : undefined;
+  res.json({ messages: state.getMessages({ since, excludeFrom: userId }) });
+});
+
+api.post("/tasks/create", (req: Request, res: Response) => {
+  const { userId, description } = req.body;
+  if (!userId || !description) { res.status(400).json({ error: "userId and description required" }); return; }
+  res.json({ task: state.createTask(description, userId) });
+});
+
+api.get("/tasks", (req: Request, res: Response) => {
+  const filter = req.query.filter as "open" | "claimed" | "completed" | undefined;
+  res.json({ tasks: state.listTasks(filter) });
+});
+
+api.post("/tasks/:taskId/claim", (req: Request, res: Response) => {
+  const { userId } = req.body;
+  res.json(state.claimTask(req.params.taskId as string, userId));
+});
+
+api.post("/tasks/:taskId/release", (req: Request, res: Response) => {
+  const { userId } = req.body;
+  res.json(state.releaseTask(req.params.taskId as string, userId));
+});
+
+api.post("/delegation/create", (req: Request, res: Response) => {
+  const { userId, goal, subtasks } = req.body;
+  if (!userId || !goal || !subtasks) { res.status(400).json({ error: "userId, goal, and subtasks required" }); return; }
+  const result = state.createDelegationPlan(goal, userId, subtasks);
+  if ("error" in result) { res.status(400).json(result); return; }
+  res.json({ plan: result });
+});
+
+api.get("/delegation", (req: Request, res: Response) => {
+  const filter = req.query.filter as "active" | "completed" | "cancelled" | undefined;
+  res.json({ plans: state.listDelegationPlans(filter) });
+});
+
+api.get("/delegation/:planId", (req: Request, res: Response) => {
+  const plan = state.getDelegationPlan(req.params.planId as string);
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+  res.json({ plan });
+});
+
+api.get("/delegation/my-tasks/:userId", (req: Request, res: Response) => {
+  res.json({ tasks: state.getMyDelegatedTasks(req.params.userId as string) });
+});
+
+api.post("/delegation/:planId/respond", (req: Request, res: Response) => {
+  const { subtaskId, userId, response, reason } = req.body;
+  res.json(state.respondToSubtask(req.params.planId as string, subtaskId, userId, response, reason));
+});
+
+api.post("/delegation/:planId/update", (req: Request, res: Response) => {
+  const { subtaskId, userId, status, notes } = req.body;
+  res.json(state.updateSubtaskStatus(req.params.planId as string, subtaskId, userId, { status, notes }));
+});
+
+api.post("/share-project", (req: Request, res: Response) => {
+  const { userId, repoUrl, branch, description } = req.body;
+  if (!userId || !repoUrl || !branch || !description) { res.status(400).json({ error: "userId, repoUrl, branch, description required" }); return; }
+  res.json({ project: state.shareProject(userId, repoUrl, branch, description) });
+});
+
+api.post("/deployment", (req: Request, res: Response) => {
+  const { userId, platform, projectName, previewUrl, productionUrl, status, commitHash } = req.body;
+  if (!userId || !platform || !projectName) { res.status(400).json({ error: "userId, platform, projectName required" }); return; }
+  const member = state.updateDeployment(userId, {
+    platform, projectName, latestPreviewUrl: previewUrl, latestProductionUrl: productionUrl,
+    lastDeployedAt: Date.now(), lastDeployStatus: status, lastDeployCommit: commitHash,
+  });
+  if (!member) { res.status(404).json({ error: "User not found" }); return; }
+  res.json({ ok: true });
+});
+
+api.get("/file-activity", (req: Request, res: Response) => {
+  const filePath = req.query.filePath as string | undefined;
+  const userId = req.query.userId as string | undefined;
+  res.json({ activities: state.getFileActivity({ filePath, userId }) });
+});
+
+app.use("/api", api);
 
 // ── Health check ───────────────────────────────────────
 
