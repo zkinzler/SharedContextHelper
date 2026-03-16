@@ -9,6 +9,7 @@ import type {
   SharedProject,
   DelegationPlan,
   DelegationSubtask,
+  CollabRequest,
 } from "./types.js";
 
 const HEARTBEAT_TIMEOUT_MS = Number(
@@ -26,6 +27,7 @@ export class StateManager {
   private fileActivities: FileActivity[] = [];
   private sharedProjects: SharedProject[] = [];
   private delegationPlans = new Map<string, DelegationPlan>();
+  private collabRequests: CollabRequest[] = [];
   private cleanupTimer: ReturnType<typeof setInterval>;
 
   constructor() {
@@ -458,6 +460,56 @@ export class StateManager {
     return { success: true };
   }
 
+  // ── Collab Requests ─────────────────────────────────
+
+  sendCollabRequest(
+    fromUserId: string,
+    toUserId: string,
+    repoUrl: string,
+    repoName: string,
+    branch: string,
+    message: string
+  ): CollabRequest {
+    const request: CollabRequest = {
+      id: randomUUID().slice(0, 8),
+      fromUserId,
+      toUserId,
+      repoUrl,
+      repoName,
+      branch,
+      message,
+      status: "pending",
+      createdAt: Date.now(),
+      expiresAt: Date.now() + 24 * 60 * 60_000,
+    };
+    this.collabRequests.push(request);
+    return request;
+  }
+
+  getCollabRequests(userId: string): CollabRequest[] {
+    const now = Date.now();
+    return this.collabRequests.filter(
+      (r) => r.toUserId === userId && r.status === "pending" && r.expiresAt > now
+    );
+  }
+
+  respondToCollabRequest(
+    requestId: string,
+    userId: string,
+    response: "accepted" | "declined"
+  ): { success: boolean; request?: CollabRequest; error?: string } {
+    const request = this.collabRequests.find((r) => r.id === requestId);
+    if (!request) return { success: false, error: "Request not found" };
+    if (request.toUserId !== userId) {
+      return { success: false, error: "This request is not for you" };
+    }
+    if (request.status !== "pending") {
+      return { success: false, error: `Request is already ${request.status}` };
+    }
+    request.status = response;
+    return { success: true, request };
+  }
+
   // ── Cleanup ──────────────────────────────────────────
 
   private cleanup(): void {
@@ -472,6 +524,9 @@ export class StateManager {
     this.messages = this.messages.filter((m) => m.expiresAt > now);
     this.sharedProjects = this.sharedProjects.filter(
       (p) => p.expiresAt > now
+    );
+    this.collabRequests = this.collabRequests.filter(
+      (r) => r.expiresAt > now
     );
     for (const [id, plan] of this.delegationPlans) {
       if (

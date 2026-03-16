@@ -267,6 +267,25 @@ api.get("/file-activity", (req: Request, res: Response) => {
   res.json({ activities: state.getFileActivity({ filePath, userId }) });
 });
 
+api.post("/collab-request", (req: Request, res: Response) => {
+  const { fromUserId, toUserId, repoUrl, repoName, branch, message } = req.body;
+  if (!fromUserId || !toUserId || !repoUrl || !repoName || !branch) {
+    res.status(400).json({ error: "fromUserId, toUserId, repoUrl, repoName, branch required" }); return;
+  }
+  const request = state.sendCollabRequest(fromUserId, toUserId, repoUrl, repoName, branch, message ?? "");
+  res.json({ request });
+});
+
+api.get("/collab-requests/:userId", (req: Request, res: Response) => {
+  res.json({ requests: state.getCollabRequests(req.params.userId as string) });
+});
+
+api.post("/collab-request/:id/respond", (req: Request, res: Response) => {
+  const { userId, response } = req.body;
+  if (!userId || !response) { res.status(400).json({ error: "userId and response required" }); return; }
+  res.json(state.respondToCollabRequest(req.params.id as string, userId, response));
+});
+
 app.use("/api", api);
 
 // ── Health check ───────────────────────────────────────

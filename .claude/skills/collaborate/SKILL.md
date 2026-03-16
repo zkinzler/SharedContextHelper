@@ -3,198 +3,170 @@ name: collaborate
 description: >
   BoodleBox team collaboration. Coordinate with teammates across any project.
   Auto-detects your git repo and branch. See who's working on what, share projects,
-  track deployments, delegate tasks. Invoke when user says collaborate, team,
-  coordinate, who's working, share project, check deployments, delegate, what is
-  [name] doing, or type /collaborate.
-allowed-tools: Bash(git *), Bash(hostname), Bash(cat ~/.boodlebox-user), Bash(echo * > ~/.boodlebox-user), Bash(curl *), Bash(cat *team-config.json*), Bash(cat ~/.boodlebox-projects.json), Bash(mkdir *), Read
+  track deployments, delegate tasks, send collab requests. Invoke when user says
+  collaborate, team, coordinate, who's working, share project, delegate, work with,
+  what is [name] doing, or type /collaborate.
+allowed-tools: Bash(git *), Bash(hostname), Bash(cat ~/.boodlebox-user), Bash(echo * > ~/.boodlebox-user), Bash(curl *), Bash(cat *), Bash(mkdir *), Bash(node -e *), Read
 ---
 
 # BoodleBox Team Collaboration
 
-This skill uses the REST API (`/api/*`) via curl — no MCP server setup or session
-restart needed. All server calls go through a helper function.
-
-## API helper
-
-All calls use this pattern (adapt URL, token, method, and path as needed):
-
-```bash
-curl -s -X METHOD "$SERVER_URL/api/PATH" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"key":"value"}'
-```
-
-For GET requests, omit `-X` and `-d`, use query params instead.
+This skill connects to a single shared server via REST API. Works from any
+directory, any project — no per-repo config needed.
 
 ## On startup, do this automatically:
 
-1. **Get user identity.** Run `cat ~/.boodlebox-user 2>/dev/null` to get the user's name.
-   If the file doesn't exist, ask for their first name and save it:
-   `echo "TheirName" > ~/.boodlebox-user`
+1. **Get user identity.** Run `cat ~/.boodlebox-user 2>/dev/null`.
+   If not found, ask for their first name and save: `echo "NAME" > ~/.boodlebox-user`
 
-2. **Find the project server.** Look for connection info in this order:
-   a. Check current git repo for `team-config.json` (has `url` and `token`)
-   b. Check `~/.boodlebox-projects.json` for a saved project matching the current repo
-   c. If neither found, ask the user: "Which project do you want to collaborate on?"
-      - If they give a GitHub URL, clone it and look for `team-config.json`
-      - If they give a project name, check `~/.boodlebox-projects.json`
-      - If no match, tell them they need a team-config.json from whoever set up the server
+2. **Get server connection.** Run `cat ~/.boodlebox-config.json 2>/dev/null`.
+   This file has `serverUrl`, `token`, and `userId`.
 
-   Once you have the URL and token, save them:
+   If not found, look for `team-config.json` in the current directory or git root:
    ```bash
-   # Read team-config.json
-   SERVER_URL=$(cat team-config.json | grep -o '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
-   TOKEN=$(cat team-config.json | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+   cat team-config.json 2>/dev/null || cat "$(git rev-parse --show-toplevel 2>/dev/null)/team-config.json" 2>/dev/null
+   ```
+   If found, read `url` and `token` from it and create `~/.boodlebox-config.json`:
+   ```bash
+   node -e "
+   const tc = JSON.parse(require('fs').readFileSync('team-config.json','utf8'));
+   const config = {serverUrl: tc.url, token: tc.token, userId: '$(cat ~/.boodlebox-user)'};
+   require('fs').writeFileSync(process.env.HOME+'/.boodlebox-config.json', JSON.stringify(config,null,2));
+   "
    ```
 
-   Save to local project registry for future use:
+   If neither found, tell the user:
+   "I need a server to connect to. Options:
+   - If a teammate already set this up, ask them for the server URL and token
+   - Run `./join.sh` in the SharedContextHelper repo"
+   Then ask for serverUrl and token, and save to `~/.boodlebox-config.json`.
+
+   Once you have the config, set variables for all subsequent calls:
    ```bash
-   # Save project to ~/.boodlebox-projects.json for next time
-   # (read existing, add/update entry, write back)
+   SERVER_URL=... TOKEN=... USER=...
    ```
 
-3. **Detect git context.** Run these commands (skip any that fail):
-   - `git remote get-url origin 2>/dev/null` -> repoUrl
-   - `git rev-parse --abbrev-ref HEAD 2>/dev/null` -> branch
-   - `basename -s .git $(git remote get-url origin 2>/dev/null) 2>/dev/null` -> repoName
-   - `git log -1 --format="%H|||%s" 2>/dev/null` -> last commit hash and message
-   - `pwd` -> localPath
-   - `hostname` -> machineId
+3. **Test connection.**
+   ```bash
+   curl -sf "$SERVER_URL/health"
+   ```
+   If it fails, tell the user the server is unreachable.
 
-4. **Register with team.**
+4. **Register.**
    ```bash
    curl -s -X POST "$SERVER_URL/api/register" \
      -H "Content-Type: application/json" \
      -H "Authorization: Bearer $TOKEN" \
-     -d '{"userId":"NAME","machineId":"HOSTNAME"}'
+     -d "{\"userId\":\"$USER\",\"machineId\":\"$(hostname)\"}"
    ```
 
-5. **Share git context.** If git info was detected:
+5. **Share git context** (if in a git repo):
    ```bash
-   curl -s -X POST "$SERVER_URL/api/git-context" \
-     -H "Content-Type: application/json" \
-     -H "Authorization: Bearer $TOKEN" \
-     -d '{"userId":"NAME","repoUrl":"...","repoName":"...","branch":"...","localPath":"...","lastCommitHash":"...","lastCommitMessage":"..."}'
+   REPO_URL=$(git remote get-url origin 2>/dev/null)
+   BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+   REPO_NAME=$(basename -s .git "$REPO_URL" 2>/dev/null)
+   COMMIT_INFO=$(git log -1 --format="%H|||%s" 2>/dev/null)
+   LOCAL_PATH=$(pwd)
    ```
+   If git info detected, POST to `/api/git-context`.
 
-6. **Get the full picture.**
-   ```bash
-   curl -s "$SERVER_URL/api/overview?userId=NAME" \
-     -H "Authorization: Bearer $TOKEN"
+6. **Get the full picture.** Make these calls (can be combined in one bash block):
+   - `GET /api/overview?userId=$USER` → team members, shared projects, deployments
+   - `GET /api/messages?userId=$USER` → broadcast messages
+   - `GET /api/delegation/my-tasks/$USER` → delegated tasks
+   - `GET /api/collab-requests/$USER` → incoming collaboration requests
+
+7. **Report dashboard.** Show a friendly summary:
+   - **Your context:** repo, branch (if in a git repo)
+   - **Team:** who's online, what repo/branch they're on, what they're working on
+   - **Collab requests:** "Alex wants to collaborate with you on [repo] @ [branch]" — ask if they want to accept
+   - **Delegated tasks:** pending tasks assigned to you
+   - **Messages:** any broadcasts
+   - **Shared projects:** available to clone
+   - **Tip:** "Say 'I want to work with [name]' to send them a collab request"
+
+## Interactive flows
+
+### "I want to collaborate" (generic)
+Show the full team dashboard. Let the user pick someone to work with or a project to join.
+
+### "I want to collaborate on [GitHub URL]"
+1. If the repo is already cloned locally, detect it. Otherwise offer to clone.
+2. Register git context for that repo.
+3. Show who else is working on that repo.
+4. Offer to share the project so others can discover it.
+
+### "I want to work with [person]" or "collaborate with [person]"
+1. GET `/api/team` to find that person and their current repo/branch.
+2. Show what they're working on.
+3. Ask the user: "Want to send Alex a collab request for [repo] @ [branch]?"
+4. If yes, POST `/api/collab-request`:
+   ```json
+   {
+     "fromUserId": "Zach",
+     "toUserId": "Alex",
+     "repoUrl": "https://github.com/...",
+     "repoName": "app",
+     "branch": "feature/auth",
+     "message": "Let's pair on the auth flow"
+   }
    ```
+5. Confirm: "Request sent! Alex will see it next time they /collaborate."
 
-7. **Check messages.**
-   ```bash
-   curl -s "$SERVER_URL/api/messages?userId=NAME" \
-     -H "Authorization: Bearer $TOKEN"
-   ```
+### Incoming collab requests
+When the dashboard shows pending requests:
+1. Highlight each one: "Alex wants to collaborate with you on boodlebox/app @ feature/auth"
+2. Ask if they want to accept.
+3. If accepted, POST `/api/collab-request/ID/respond` with `"accepted"`.
+4. Then offer: "Want me to clone the repo? `git clone [url] && git checkout [branch]`"
 
-8. **Check delegated tasks.**
-   ```bash
-   curl -s "$SERVER_URL/api/delegation/my-tasks/NAME" \
-     -H "Authorization: Bearer $TOKEN"
-   ```
-   If there are pending subtasks, highlight them prominently.
-
-9. **Report to the user.** Give a brief, friendly summary:
-   - Your detected context (repo, branch)
-   - Who else is online and what repo/branch they're on
-   - Any shared projects available to jump into (with clone commands)
-   - Any deployment status updates
-   - Any broadcast messages
-   - Any delegated tasks pending your response
-   - Warnings if someone is editing the same files as you
-
-## Project registry (~/.boodlebox-projects.json)
-
-Maintain a local JSON file mapping repos to server info so users don't need
-to re-discover the server each time:
-
-```json
-{
-  "projects": {
-    "SharedContextHelper": {
-      "repoUrl": "https://github.com/zkinzler/SharedContextHelper.git",
-      "serverUrl": "http://172.17.27.38:3099",
-      "token": "da16f93524d962c8597e5791351b2514",
-      "addedAt": "2026-03-16"
-    }
-  }
-}
-```
-
-When connecting to a new project, always save it here for next time.
-
-## GitHub URL sharing:
+## GitHub URL sharing
 
 When a user says "share this project" or "let others join":
-1. Get the repo URL and branch from git
-2. Ask for a short description of what they're working on
-3. POST to `/api/share-project` with userId, repoUrl, branch, description
-4. Tell them: "Shared! Teammates will see it when they /collaborate."
+1. Get repo URL and branch from git
+2. Ask for a short description
+3. POST `/api/share-project` with userId, repoUrl, branch, description
+4. "Shared! Teammates will see it when they /collaborate."
 
-When the overview shows shared projects, offer:
-- "Want to clone [name]'s project? I'll run: git clone [url] && cd [dir] && git checkout [branch]"
-
-## Deployments:
+## Deployments
 
 After a `vercel deploy` or similar:
-- Parse the output for preview/production URLs
-- POST to `/api/deployment` with platform, project name, URL, and status
-- This shows up in everyone's project overview
+- Parse output for URLs
+- POST `/api/deployment` with platform, project name, URL, status
 
-## Ongoing behavior:
+## Ongoing behavior
 
-- **Before editing a shared file:** GET `/api/file-activity?filePath=...` to check for conflicts.
-- **When starting a new task:** POST `/api/status` with your goal.
-- **When making a big change:** POST `/api/broadcast` to let the team know.
-- **After git push:** POST `/api/git-context` to update your context.
-- **After deploy:** Capture and share the deploy URL via `/api/deployment`.
-
-Keep it lightweight — update status on meaningful changes, not every keystroke.
+- **Before editing a shared file:** GET `/api/file-activity?filePath=...`
+- **When starting a new task:** POST `/api/status` with your goal
+- **When making a big change:** POST `/api/broadcast`
+- **After git push:** POST `/api/git-context`
+- **After deploy:** POST `/api/deployment`
 
 ## Task Delegation
 
-When a user describes a big goal or project (e.g., "build a landing page with auth",
-"refactor the API layer", "ship the new dashboard"):
+When a user describes a big goal:
+1. GET `/api/team` to see who's available
+2. Break down into subtasks, consider dependencies and who's best suited
+3. Present plan to user for approval
+4. POST `/api/delegation/create` with the breakdown
+5. POST `/api/broadcast` to notify the team
 
-1. **Assess the team.** GET `/api/team?userId=NAME` to see who's online.
-2. **Break down the goal.** Think about the subtasks needed, considering:
-   - What can be parallelized vs. what has dependencies
-   - Who's best suited based on what they're currently working on
-   - Priority of each subtask
-3. **Present the plan to the user.** Before committing, show them:
-   - The subtask breakdown
-   - Who you'd assign each to and why
-   - The dependency order
-4. **After user approval,** POST to `/api/delegation/create`:
-   ```json
-   {"userId":"NAME","goal":"...","subtasks":[
-     {"description":"...","assignedTo":"...","priority":"high","dependsOnIndices":[]},
-     {"description":"...","assignedTo":"...","priority":"medium","dependsOnIndices":[0]}
-   ]}
-   ```
-5. **Broadcast.** POST `/api/broadcast` to let the team know a plan was created.
+When you see delegated tasks:
+- **Pending:** Ask user to accept → POST `/api/delegation/PLANID/respond`
+- **Accepted:** Starting work → POST `/api/delegation/PLANID/update` with `"in_progress"`
+- **Done:** POST update with `"completed"` and notes
 
-When you see delegated tasks assigned to your user:
-- **Pending tasks:** Ask the user if they want to accept. POST `/api/delegation/PLANID/respond`
-  with `{"subtaskId":"...","userId":"...","response":"accepted"}`.
-- **Accepted tasks:** When starting work, POST `/api/delegation/PLANID/update`
-  with `{"subtaskId":"...","userId":"...","status":"in_progress"}`.
-- **Completed tasks:** POST update with `"status":"completed"` and a `"notes"` summary.
-- **Blocked tasks:** If dependencies aren't met, tell the user and show what's blocking.
+## Quick commands
 
-## Quick commands:
-
-- `/collaborate` — full check-in (register + overview + messages + delegated tasks)
-- `/collaborate check` or `/collaborate status` — just get team overview
-- `/collaborate broadcast <message>` — send a broadcast
+- `/collaborate` — full check-in (dashboard + requests + tasks)
+- `/collaborate status` — team overview only
+- `/collaborate broadcast <msg>` — send a broadcast
 - `/collaborate tasks` — list shared tasks
-- `/collaborate share` — share current project with team
-- `/collaborate delegate <goal>` — break down a goal and delegate to the team
-- `/collaborate my-tasks` — check tasks delegated to you
-- `/collaborate plan <planId>` — view a delegation plan's status
+- `/collaborate share` — share current project
+- `/collaborate delegate <goal>` — break down and delegate a goal
+- `/collaborate my-tasks` — delegated tasks assigned to you
+- `/collaborate plan <planId>` — view delegation plan status
+- `/collaborate work with <person>` — send a collab request
 
 ## REST API Reference
 
@@ -205,7 +177,7 @@ All endpoints require `Authorization: Bearer TOKEN` header.
 | POST | /api/register | Register/heartbeat `{userId, machineId?}` |
 | POST | /api/status | Update status `{userId, currentGoal?, workingFiles?, status?}` |
 | GET | /api/team?userId= | Get team members |
-| POST | /api/git-context | Update git info `{userId, repoUrl, repoName, branch, localPath, ...}` |
+| POST | /api/git-context | Update git info |
 | GET | /api/overview?userId= | Full dashboard |
 | POST | /api/broadcast | Send message `{userId, message, ttlMinutes?}` |
 | GET | /api/messages?userId=&since= | Get messages |
@@ -217,8 +189,11 @@ All endpoints require `Authorization: Bearer TOKEN` header.
 | GET | /api/delegation?filter= | List plans |
 | GET | /api/delegation/:planId | Get plan details |
 | GET | /api/delegation/my-tasks/:userId | Get assigned subtasks |
-| POST | /api/delegation/:planId/respond | Accept/reject `{subtaskId, userId, response, reason?}` |
-| POST | /api/delegation/:planId/update | Update subtask `{subtaskId, userId, status?, notes?}` |
-| POST | /api/share-project | Share project `{userId, repoUrl, branch, description}` |
-| POST | /api/deployment | Update deploy `{userId, platform, projectName, ...}` |
+| POST | /api/delegation/:planId/respond | Accept/reject subtask |
+| POST | /api/delegation/:planId/update | Update subtask status |
+| POST | /api/share-project | Share project |
+| POST | /api/deployment | Update deployment |
 | GET | /api/file-activity?filePath=&userId= | File activity |
+| POST | /api/collab-request | Send collab request `{fromUserId, toUserId, repoUrl, repoName, branch, message?}` |
+| GET | /api/collab-requests/:userId | Get pending requests |
+| POST | /api/collab-request/:id/respond | Accept/decline `{userId, response}` |

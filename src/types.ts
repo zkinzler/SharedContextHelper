@@ -67,6 +67,19 @@ export interface SharedProject {
   expiresAt: number;
 }
 
+export interface CollabRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  repoUrl: string;
+  repoName: string;
+  branch: string;
+  message: string;
+  status: "pending" | "accepted" | "declined";
+  createdAt: number;
+  expiresAt: number;
+}
+
 export interface DelegationSubtask {
   subtaskId: string;
   description: string;

@@ -538,6 +538,102 @@ export function createServer(): McpServer {
     }
   );
 
+  // ── send_collab_request ─────────────────────────────
+
+  server.tool(
+    "send_collab_request",
+    "Send a collaboration request to a teammate. They'll see it next time they check in.",
+    {
+      fromUserId: z.string().describe("Your user ID"),
+      toUserId: z.string().describe("The teammate you want to collaborate with"),
+      repoUrl: z.string().describe("Git repo URL you want to work on together"),
+      repoName: z.string().describe("Short repo name"),
+      branch: z.string().describe("Branch you're working on"),
+      message: z.string().optional().describe("Optional message about what you want to work on"),
+    },
+    async ({ fromUserId, toUserId, repoUrl, repoName, branch, message }) => {
+      const request = state.sendCollabRequest(fromUserId, toUserId, repoUrl, repoName, branch, message ?? "");
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Collab request sent to ${toUserId} (id: ${request.id}).\nProject: ${repoName} @ ${branch}\nThey'll see it next time they /collaborate.`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── get_collab_requests ────────────────────────────
+
+  server.tool(
+    "get_collab_requests",
+    "Check for incoming collaboration requests from teammates.",
+    {
+      userId: z.string().describe("Your user ID"),
+    },
+    async ({ userId }) => {
+      const requests = state.getCollabRequests(userId);
+      if (requests.length === 0) {
+        return {
+          content: [
+            { type: "text" as const, text: "No pending collaboration requests." },
+          ],
+        };
+      }
+      const lines = requests.map((r) => {
+        return `- [${r.id}] ${r.fromUserId} wants to collaborate on ${r.repoName} @ ${r.branch}${r.message ? `: "${r.message}"` : ""}`;
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `# Collaboration Requests (${requests.length})\n\n${lines.join("\n")}`,
+          },
+        ],
+      };
+    }
+  );
+
+  // ── respond_to_collab_request ──────────────────────
+
+  server.tool(
+    "respond_to_collab_request",
+    "Accept or decline a collaboration request.",
+    {
+      requestId: z.string().describe("The request ID"),
+      userId: z.string().describe("Your user ID"),
+      response: z.enum(["accepted", "declined"]).describe("Accept or decline"),
+    },
+    async ({ requestId, userId, response }) => {
+      const result = state.respondToCollabRequest(requestId, userId, response);
+      if (!result.success) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      const req = result.request!;
+      if (response === "accepted") {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Accepted! You're collaborating with ${req.fromUserId} on ${req.repoName} @ ${req.branch}.\nClone: git clone ${req.repoUrl} && git checkout ${req.branch}`,
+            },
+          ],
+        };
+      }
+      return {
+        content: [
+          { type: "text" as const, text: `Declined collaboration request from ${req.fromUserId}.` },
+        ],
+      };
+    }
+  );
+
   // ── create_delegation_plan ──────────────────────────
 
   server.tool(
