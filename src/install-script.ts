@@ -121,11 +121,8 @@ echo "$NAME" > ~/.boodlebox-user
 echo "[1/3] Saved identity: $NAME"
 
 # 2. Add MCP server (user-level, works in all projects)
-claude mcp remove shared-context 2>/dev/null || true
-claude mcp add -s user \\
-  --transport http \\
-  --header "Authorization: Bearer $TOKEN" \\
-  shared-context "$SERVER_URL/mcp"
+claude mcp remove -s user shared-context 2>/dev/null || true
+claude mcp add --transport http --scope user shared-context "$SERVER_URL/mcp" --header "Authorization: Bearer $TOKEN"
 echo "[2/3] Connected to BoodleBox server"
 
 # 3. Install the /collaborate skill globally
