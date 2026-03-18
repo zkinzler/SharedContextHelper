@@ -211,6 +211,11 @@ api.post("/tasks/:taskId/release", (req: Request, res: Response) => {
   res.json(state.releaseTask(req.params.taskId as string, userId));
 });
 
+api.post("/tasks/:taskId/complete", (req: Request, res: Response) => {
+  const { userId } = req.body;
+  res.json(state.completeTask(req.params.taskId as string, userId));
+});
+
 api.post("/delegation/create", (req: Request, res: Response) => {
   const { userId, goal, subtasks } = req.body;
   if (!userId || !goal || !subtasks) { res.status(400).json({ error: "userId, goal, and subtasks required" }); return; }

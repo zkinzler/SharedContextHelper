@@ -334,6 +334,9 @@ export class StateManager {
       approach?: string;
     }>
   ): DelegationPlan | { error: string } {
+    if (subtasks.length === 0) {
+      return { error: "At least one subtask is required" };
+    }
     const subtaskIds = subtasks.map(() => randomUUID().slice(0, 8));
     for (const s of subtasks) {
       if (s.dependsOnIndices) {

@@ -30,22 +30,26 @@ explain each step — just do it all and show the results at the end.
 
 **Step 1: Get identity, config, and git context all at once.**
 
+Run this as ONE bash command. Read the output to get all the variables you need.
+
 ```bash
-# Identity
+# Identity — check boodlebox-user first, fall back to config file
 USER=$(cat ~/.boodlebox-user 2>/dev/null)
 
 # Config — check global config first, then team-config.json in repo
 CONFIG=$(cat ~/.boodlebox-config.json 2>/dev/null)
-if [ -z "$CONFIG" ]; then
-  # Try team-config.json in current dir or git root
+if [ -n "$CONFIG" ]; then
+  SERVER_URL=$(echo "$CONFIG" | grep -o '"serverUrl"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"serverUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  TOKEN=$(echo "$CONFIG" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  # Also get userId from config as fallback
+  CONFIG_USER=$(echo "$CONFIG" | grep -o '"userId"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"userId"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
+  [ -z "$USER" ] && USER="$CONFIG_USER"
+else
   TC=$(cat team-config.json 2>/dev/null || cat "$(git rev-parse --show-toplevel 2>/dev/null)/team-config.json" 2>/dev/null)
   if [ -n "$TC" ]; then
     SERVER_URL=$(echo "$TC" | grep -o '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"url"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
     TOKEN=$(echo "$TC" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
   fi
-else
-  SERVER_URL=$(echo "$CONFIG" | grep -o '"serverUrl"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"serverUrl"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
-  TOKEN=$(echo "$CONFIG" | grep -o '"token"[[:space:]]*:[[:space:]]*"[^"]*"' | head -1 | sed 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)"/\1/')
 fi
 
 # Git context
@@ -64,31 +68,28 @@ echo "REPO=$REPO_NAME BRANCH=$BRANCH"
 
 **Step 2: Handle missing identity.**
 If USER is empty, ask for their first name. Then save it:
-```bash
-echo "TheirName" > ~/.boodlebox-user
-```
+`echo "TheirName" > ~/.boodlebox-user`
 
 **Step 3: Handle missing config.**
 If SERVER_URL is empty (no config file AND no team-config.json found):
 - Ask: "What's the server URL for your team's collaboration server?"
-- If they don't know, tell them: "Ask a teammate who set this up, or check if there's
-  a SharedContextHelper repo with a team-config.json in it."
+- If they don't know: "Ask a teammate, or look for a SharedContextHelper repo with team-config.json."
 
-Once you have SERVER_URL and TOKEN, **always save to global config** so it works next time:
+Once you have SERVER_URL and TOKEN, **always save to global config**:
 ```bash
 cat > ~/.boodlebox-config.json << EOF
-{
-  "serverUrl": "$SERVER_URL",
-  "token": "$TOKEN",
-  "userId": "$USER"
-}
+{"serverUrl":"SERVER_URL_HERE","token":"TOKEN_HERE","userId":"USER_HERE"}
 EOF
 ```
 
-**Step 4: Connect, register, and fetch everything in one block.**
+**Step 4: Connect, register, and fetch everything in ONE bash block.**
+
+IMPORTANT: You must substitute the actual values for SERVER_URL, TOKEN, and USER
+from step 1 into this script. Shell variables do NOT persist between bash calls.
 
 ```bash
-SERVER_URL="..." TOKEN="..." USER="..."
+SERVER_URL="the_actual_url" TOKEN="the_actual_token" USER="the_actual_name"
+REPO_URL="..." REPO_NAME="..." BRANCH="..." LOCAL_PATH="..." COMMIT_INFO="..."
 
 # Test connection
 HEALTH=$(curl -sf "$SERVER_URL/health" 2>/dev/null)
@@ -297,6 +298,7 @@ All endpoints require `Authorization: Bearer TOKEN` header.
 | GET | /api/tasks?filter= | List tasks |
 | POST | /api/tasks/:id/claim | Claim task `{userId}` |
 | POST | /api/tasks/:id/release | Release task `{userId}` |
+| POST | /api/tasks/:id/complete | Complete task `{userId}` |
 | POST | /api/delegation/create | Create plan `{userId, goal, subtasks[]}` |
 | GET | /api/delegation?filter= | List plans |
 | GET | /api/delegation/:planId | Get plan details |
