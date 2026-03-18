@@ -12,6 +12,7 @@ import type {
   CollabRequest,
   WorkLogEntry,
 } from "./types.js";
+import { PersistenceLayer } from "./db.js";
 
 const HEARTBEAT_TIMEOUT_MS = Number(
   process.env.HEARTBEAT_TIMEOUT_MS ?? 300_000
@@ -30,8 +31,18 @@ export class StateManager {
   private delegationPlans = new Map<string, DelegationPlan>();
   private collabRequests: CollabRequest[] = [];
   private cleanupTimer: ReturnType<typeof setInterval>;
+  private db: PersistenceLayer;
 
   constructor() {
+    this.db = new PersistenceLayer();
+    // Load persisted state
+    this.members = this.db.loadMembers();
+    this.tasks = this.db.loadTasks();
+    this.messages = this.db.loadMessages();
+    this.sharedProjects = this.db.loadSharedProjects();
+    this.delegationPlans = this.db.loadDelegationPlans();
+    this.collabRequests = this.db.loadCollabRequests();
+    console.log(`[DB] Loaded: ${this.members.size} members, ${this.tasks.size} tasks, ${this.delegationPlans.size} plans`);
     this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
   }
 
@@ -55,6 +66,7 @@ export class StateManager {
       registeredAt: Date.now(),
     };
     this.members.set(userId, member);
+    this.db.saveMember(member);
     return member;
   }
 
@@ -63,6 +75,7 @@ export class StateManager {
     if (!member) return false;
     member.lastHeartbeat = Date.now();
     member.status = "active";
+    this.db.saveMember(member);
     return true;
   }
 
@@ -86,6 +99,7 @@ export class StateManager {
     }
     if (updates.status !== undefined) member.status = updates.status;
     member.lastHeartbeat = Date.now();
+    this.db.saveMember(member);
     return member;
   }
 
@@ -112,6 +126,7 @@ export class StateManager {
     if (!member) return null;
     member.gitContext = gitContext;
     member.lastHeartbeat = Date.now();
+    this.db.saveMember(member);
     return member;
   }
 
@@ -133,6 +148,7 @@ export class StateManager {
       member.deployments.push(deployment);
     }
     member.lastHeartbeat = Date.now();
+    this.db.saveMember(member);
     return member;
   }
 
@@ -154,6 +170,7 @@ export class StateManager {
       expiresAt: Date.now() + 24 * 60 * 60_000, // 24h TTL
     };
     this.sharedProjects.push(project);
+    this.db.saveSharedProject(project);
     return project;
   }
 
@@ -200,6 +217,7 @@ export class StateManager {
       createdBy,
     };
     this.tasks.set(task.taskId, task);
+    this.db.saveTask(task);
     return task;
   }
 
@@ -219,6 +237,7 @@ export class StateManager {
     task.claimedBy = userId;
     task.claimedAt = Date.now();
     task.status = "claimed";
+    this.db.saveTask(task);
     return { success: true, task };
   }
 
@@ -234,6 +253,7 @@ export class StateManager {
     task.claimedBy = null;
     task.claimedAt = null;
     task.status = "open";
+    this.db.saveTask(task);
     return { success: true };
   }
 
@@ -248,6 +268,7 @@ export class StateManager {
     }
     task.status = "completed";
     task.claimedBy = userId;
+    this.db.saveTask(task);
     return { success: true };
   }
 
@@ -272,6 +293,7 @@ export class StateManager {
       expiresAt: Date.now() + ttlMinutes * 60_000,
     };
     this.messages.push(msg);
+    this.db.saveMessage(msg);
     return msg;
   }
 
@@ -368,6 +390,7 @@ export class StateManager {
       subtasks: resolvedSubtasks,
     };
     this.delegationPlans.set(plan.planId, plan);
+    this.db.saveDelegationPlan(plan);
     return plan;
   }
 
@@ -429,6 +452,14 @@ export class StateManager {
       subtask.status = "rejected";
       subtask.rejectionReason = reason;
     }
+    this.db.saveDelegationPlan(plan);
+    // Auto-notify the coordinator
+    const verb = response === "accepted" ? "accepted" : `rejected${reason ? ` (${reason})` : ""}`;
+    this.broadcastMessage(
+      "system",
+      `${userId} ${verb} subtask: "${subtask.description}" (plan: ${plan.goal})`,
+      120
+    );
     return { success: true };
   }
 
@@ -461,13 +492,56 @@ export class StateManager {
     if (updates.notes !== undefined) {
       subtask.notes = updates.notes;
     }
+    // Auto-notify on completion
+    if (updates.status === "completed") {
+      this.broadcastMessage(
+        "system",
+        `${userId} completed: "${subtask.description}"${updates.notes ? ` — ${updates.notes}` : ""} (plan: ${plan.goal})`,
+        120
+      );
+    }
     // Auto-complete plan if all subtasks are done
     const allDone = plan.subtasks.every(
       (s) => s.status === "completed" || s.status === "rejected"
     );
     if (allDone) {
       plan.status = "completed";
+      this.broadcastMessage(
+        "system",
+        `Plan "${plan.goal}" is complete! All subtasks done.`,
+        120
+      );
     }
+    this.db.saveDelegationPlan(plan);
+    return { success: true };
+  }
+
+  reassignSubtask(
+    planId: string,
+    subtaskId: string,
+    requesterId: string,
+    newAssignee: string
+  ): { success: boolean; error?: string } {
+    const plan = this.delegationPlans.get(planId);
+    if (!plan) return { success: false, error: "Plan not found" };
+    if (plan.createdBy !== requesterId) {
+      return { success: false, error: "Only the plan creator can reassign subtasks" };
+    }
+    const subtask = plan.subtasks.find((s) => s.subtaskId === subtaskId);
+    if (!subtask) return { success: false, error: "Subtask not found" };
+    const oldAssignee = subtask.assignedTo;
+    subtask.assignedTo = newAssignee;
+    subtask.status = "pending";
+    subtask.rejectionReason = undefined;
+    subtask.acceptedAt = undefined;
+    subtask.completedAt = undefined;
+    subtask.workLog = [];
+    this.db.saveDelegationPlan(plan);
+    this.broadcastMessage(
+      "system",
+      `${requesterId} reassigned "${subtask.description}" from ${oldAssignee} to ${newAssignee} (plan: ${plan.goal})`,
+      120
+    );
     return { success: true };
   }
 
@@ -490,6 +564,10 @@ export class StateManager {
       message: entry.message,
       metadata: entry.metadata,
     });
+    if (subtask.workLog.length > 50) {
+      subtask.workLog = subtask.workLog.slice(-50);
+    }
+    this.db.saveDelegationPlan(plan);
     return { success: true };
   }
 
@@ -516,6 +594,7 @@ export class StateManager {
       expiresAt: Date.now() + 24 * 60 * 60_000,
     };
     this.collabRequests.push(request);
+    this.db.saveCollabRequest(request);
     return request;
   }
 
@@ -540,6 +619,7 @@ export class StateManager {
       return { success: false, error: `Request is already ${request.status}` };
     }
     request.status = response;
+    this.db.saveCollabRequest(request);
     return { success: true, request };
   }
 
@@ -550,6 +630,7 @@ export class StateManager {
     for (const [id, member] of this.members) {
       if (now - member.lastHeartbeat > REMOVE_AFTER_MS) {
         this.members.delete(id);
+        this.db.deleteMember(id);
       } else if (now - member.lastHeartbeat > HEARTBEAT_TIMEOUT_MS) {
         member.status = "away";
       }
@@ -561,18 +642,21 @@ export class StateManager {
     this.collabRequests = this.collabRequests.filter(
       (r) => r.expiresAt > now
     );
+    this.db.cleanupAll();
     for (const [id, plan] of this.delegationPlans) {
       if (
         plan.status === "active" &&
         now - plan.createdAt > 24 * 60 * 60_000
       ) {
         this.delegationPlans.delete(id);
+        this.db.deleteDelegationPlan(id);
       }
     }
   }
 
   destroy(): void {
     clearInterval(this.cleanupTimer);
+    this.db.close();
   }
 }
 

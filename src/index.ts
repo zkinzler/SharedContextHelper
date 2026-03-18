@@ -272,6 +272,35 @@ api.get("/file-activity", (req: Request, res: Response) => {
   res.json({ activities: state.getFileActivity({ filePath, userId }) });
 });
 
+api.post("/delegation/:planId/reassign", (req: Request, res: Response) => {
+  const { subtaskId, userId, newAssignee } = req.body;
+  if (!subtaskId || !userId || !newAssignee) {
+    res.status(400).json({ error: "subtaskId, userId, newAssignee required" }); return;
+  }
+  res.json(state.reassignSubtask(req.params.planId as string, subtaskId, userId, newAssignee));
+});
+
+api.get("/delegation/:planId/summary", (req: Request, res: Response) => {
+  const plan = state.getDelegationPlan(req.params.planId as string);
+  if (!plan) { res.status(404).json({ error: "Plan not found" }); return; }
+  const now = Date.now();
+  const summary = plan.subtasks.map((s) => {
+    const lastLog = s.workLog.length > 0 ? s.workLog[s.workLog.length - 1] : null;
+    const lastActivity = lastLog ? Math.round((now - lastLog.timestamp) / 1000) : null;
+    return {
+      subtaskId: s.subtaskId,
+      description: s.description,
+      assignedTo: s.assignedTo,
+      status: s.status,
+      priority: s.priority,
+      logCount: s.workLog.length,
+      latestLog: lastLog ? { type: lastLog.type, message: lastLog.message } : null,
+      secondsSinceLastActivity: lastActivity,
+    };
+  });
+  res.json({ planId: plan.planId, goal: plan.goal, status: plan.status, subtasks: summary });
+});
+
 api.post("/delegation/:planId/log", (req: Request, res: Response) => {
   const { subtaskId, userId, type, message, metadata } = req.body;
   if (!subtaskId || !userId || !type || !message) {

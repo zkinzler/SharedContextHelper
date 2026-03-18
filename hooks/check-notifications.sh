@@ -29,31 +29,51 @@ TASKS=$(curl -sf --connect-timeout 2 --max-time 2 "$SERVER_URL/api/delegation/my
 REQUESTS=$(curl -sf --connect-timeout 2 --max-time 2 "$SERVER_URL/api/collab-requests/$USER" -H "$AUTH" 2>/dev/null)
 MESSAGES=$(curl -sf --connect-timeout 2 --max-time 2 "$SERVER_URL/api/messages?userId=$USER" -H "$AUTH" 2>/dev/null)
 
-# Build notification output — only if there's something new
 NOTIFICATIONS=""
 
-# Check for pending delegated tasks
-TASK_COUNT=$(echo "$TASKS" 2>/dev/null | grep -o '"status":"pending"' | wc -l | tr -d ' ')
-if [ "$TASK_COUNT" -gt 0 ]; then
-  NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] You have $TASK_COUNT pending delegated task(s). "
+# Delegated tasks — show first task detail
+if echo "$TASKS" 2>/dev/null | grep -q '"status":"pending"'; then
+  TASK_COUNT=$(echo "$TASKS" | grep -o '"status":"pending"' | wc -l | tr -d ' ')
+  # Extract first pending task description and goal
+  FIRST_DESC=$(echo "$TASKS" | grep -o '"description":"[^"]*"' | head -1 | sed 's/"description":"//;s/"//')
+  FIRST_GOAL=$(echo "$TASKS" | grep -o '"goal":"[^"]*"' | head -1 | sed 's/"goal":"//;s/"//')
+  if [ "$TASK_COUNT" -eq 1 ]; then
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] Delegated task: \"${FIRST_DESC}\" (plan: ${FIRST_GOAL}). "
+  else
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${TASK_COUNT} delegated tasks. First: \"${FIRST_DESC}\" (plan: ${FIRST_GOAL}). "
+  fi
 fi
 
-# Check for in-progress tasks
-IP_COUNT=$(echo "$TASKS" 2>/dev/null | grep -o '"status":"in_progress"' | wc -l | tr -d ' ')
-if [ "$IP_COUNT" -gt 0 ]; then
-  NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] You have $IP_COUNT task(s) in progress. "
+# In-progress tasks
+if echo "$TASKS" 2>/dev/null | grep -q '"status":"in_progress"'; then
+  IP_COUNT=$(echo "$TASKS" | grep -o '"status":"in_progress"' | wc -l | tr -d ' ')
+  NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${IP_COUNT} task(s) in progress. "
 fi
 
-# Check for collab requests
-REQ_COUNT=$(echo "$REQUESTS" 2>/dev/null | grep -o '"status":"pending"' | wc -l | tr -d ' ')
-if [ "$REQ_COUNT" -gt 0 ]; then
-  NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] You have $REQ_COUNT collaboration request(s). "
+# Collab requests — show who
+if echo "$REQUESTS" 2>/dev/null | grep -q '"status":"pending"'; then
+  REQ_COUNT=$(echo "$REQUESTS" | grep -o '"status":"pending"' | wc -l | tr -d ' ')
+  FROM=$(echo "$REQUESTS" | grep -o '"fromUserId":"[^"]*"' | head -1 | sed 's/"fromUserId":"//;s/"//')
+  REPO=$(echo "$REQUESTS" | grep -o '"repoName":"[^"]*"' | head -1 | sed 's/"repoName":"//;s/"//')
+  if [ "$REQ_COUNT" -eq 1 ]; then
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${FROM} wants to collaborate on ${REPO}. "
+  else
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${REQ_COUNT} collab requests (first from ${FROM} on ${REPO}). "
+  fi
 fi
 
-# Check for messages
-MSG_COUNT=$(echo "$MESSAGES" 2>/dev/null | grep -o '"from":' | wc -l | tr -d ' ')
-if [ "$MSG_COUNT" -gt 0 ]; then
-  NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] $MSG_COUNT team message(s). "
+# Messages — show latest
+if echo "$MESSAGES" 2>/dev/null | grep -q '"from":'; then
+  MSG_COUNT=$(echo "$MESSAGES" | grep -o '"from":' | wc -l | tr -d ' ')
+  LATEST_FROM=$(echo "$MESSAGES" | grep -o '"from":"[^"]*"' | tail -1 | sed 's/"from":"//;s/"//')
+  LATEST_MSG=$(echo "$MESSAGES" | grep -o '"message":"[^"]*"' | tail -1 | sed 's/"message":"//;s/"//')
+  # Truncate long messages
+  LATEST_MSG=$(echo "$LATEST_MSG" | cut -c1-80)
+  if [ "$MSG_COUNT" -eq 1 ]; then
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${LATEST_FROM}: ${LATEST_MSG}. "
+  else
+    NOTIFICATIONS="${NOTIFICATIONS}[BoodleBox] ${MSG_COUNT} messages. Latest from ${LATEST_FROM}: ${LATEST_MSG}. "
+  fi
 fi
 
 # Only output if there are notifications

@@ -10,10 +10,17 @@ The collaboration server is **already running in the cloud** at:
 - `npm run dev` or `npm run start` or `npx tsx src/index.ts` — the server is already deployed
 - Do NOT modify `team-config.json` — it has the cloud server URL
 
+## Config priority order
+
+1. `~/.boodlebox-config.json` — **primary**, used after first setup. Has serverUrl, token, userId.
+2. `team-config.json` in repo — **bootstrap only**, used to create ~/.boodlebox-config.json on first connect.
+
+If `~/.boodlebox-config.json` exists, ignore `team-config.json` entirely.
+
 ## What to do when someone says "collaborate" or "I want to collaborate"
 
 Use the `/collaborate` skill. It handles everything automatically:
-1. Reads `~/.boodlebox-config.json` or `team-config.json` for connection info
+1. Reads `~/.boodlebox-config.json` (or bootstraps from `team-config.json`)
 2. Connects to the cloud server via REST API (curl)
 3. Shows the team dashboard
 

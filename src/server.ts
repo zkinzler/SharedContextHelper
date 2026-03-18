@@ -538,6 +538,38 @@ export function createServer(): McpServer {
     }
   );
 
+  // ── reassign_subtask ────────────────────────────────
+
+  server.tool(
+    "reassign_subtask",
+    "Reassign a subtask to a different team member. Only the plan creator can do this.",
+    {
+      planId: z.string().describe("The delegation plan ID"),
+      subtaskId: z.string().describe("The subtask ID to reassign"),
+      userId: z.string().describe("Your user ID (must be the plan creator)"),
+      newAssignee: z.string().describe("userId of the new assignee"),
+    },
+    async ({ planId, subtaskId, userId, newAssignee }) => {
+      const result = state.reassignSubtask(planId, subtaskId, userId, newAssignee);
+      if (!result.success) {
+        return {
+          content: [
+            { type: "text" as const, text: `Failed: ${result.error}` },
+          ],
+          isError: true,
+        };
+      }
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `Subtask ${subtaskId} reassigned to ${newAssignee}. Status reset to pending.`,
+          },
+        ],
+      };
+    }
+  );
+
   // ── append_work_log ─────────────────────────────────
 
   server.tool(

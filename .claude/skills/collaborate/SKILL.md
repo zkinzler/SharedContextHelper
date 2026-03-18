@@ -305,7 +305,9 @@ All endpoints require `Authorization: Bearer TOKEN` header.
 | GET | /api/delegation/my-tasks/:userId | Get assigned subtasks |
 | POST | /api/delegation/:planId/respond | Accept/reject subtask |
 | POST | /api/delegation/:planId/update | Update subtask status |
+| POST | /api/delegation/:planId/reassign | Reassign subtask `{subtaskId, userId, newAssignee}` (creator only) |
 | POST | /api/delegation/:planId/log | Append work log `{subtaskId, userId, type, message, metadata?}` |
+| GET | /api/delegation/:planId/summary | Condensed plan view with log counts and latest activity |
 | POST | /api/share-project | Share project |
 | POST | /api/deployment | Update deployment |
 | GET | /api/file-activity?filePath=&userId= | File activity |
